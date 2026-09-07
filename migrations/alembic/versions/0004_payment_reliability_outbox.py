@@ -14,14 +14,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("payment_intents", sa.Column("idempotency_key", sa.String(128), nullable=False, server_default="legacy-migration"))
+    op.add_column("payment_intents", sa.Column("idempotency_key", sa.String(128), nullable=True))
+    op.execute("UPDATE payment_intents SET idempotency_key = left(provider || ':' || provider_payment_id, 128) WHERE idempotency_key IS NULL")
+    op.alter_column("payment_intents", "idempotency_key", nullable=False)
     op.add_column("payment_intents", sa.Column("reconcile_attempts", sa.Integer(), nullable=False, server_default="0"))
     op.add_column("payment_intents", sa.Column("next_reconcile_at", sa.DateTime(timezone=True)))
     op.add_column("payment_intents", sa.Column("last_reconcile_error", sa.Text()))
     op.create_unique_constraint("uq_payment_order_provider", "payment_intents", ["tenant_id", "order_id", "provider"])
     op.create_unique_constraint("uq_payment_provider_idempotency", "payment_intents", ["provider", "idempotency_key"])
     op.create_index("ix_payment_intents_reconcile_due", "payment_intents", ["next_reconcile_at"])
-    op.alter_column("payment_intents", "idempotency_key", server_default=None)
 
     op.create_table(
         "outbox_events",
