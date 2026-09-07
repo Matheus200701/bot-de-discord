@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from decimal import Decimal
 from uuid import UUID, uuid4
+from apps.api.webhooks import router as webhook_router
 
 app = FastAPI(title="Discord Commerce API", version="0.1.0")
+app.include_router(webhook_router)
 
 class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
