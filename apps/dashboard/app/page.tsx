@@ -11,10 +11,13 @@ function csrfToken(): string {
   return document.cookie.split('; ').find((value) => value.startsWith('commerce_csrf='))?.split('=')[1] ?? '';
 }
 
-async function api<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: 'include', cache: 'no-store' });
+async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method ?? 'GET').toUpperCase();
+  const headers = new Headers(options.headers);
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-CSRF-Token', csrfToken());
+  const response = await fetch(path, { ...options, headers, credentials: 'include', cache: 'no-store' });
   if (!response.ok) throw new Error(`${response.status}`);
-  return response.json();
+  return response.status === 204 ? (undefined as T) : response.json();
 }
 
 const money = (minor: number, currency = 'BRL') => new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(minor / 100);
@@ -62,9 +65,7 @@ export default function Dashboard() {
   }
 
   const logout = async () => {
-    await fetch('/api/v1/auth/discord/logout', {
-      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrfToken() },
-    });
+    await api<void>('/api/v1/auth/discord/logout', { method: 'POST' });
     location.reload();
   };
 
