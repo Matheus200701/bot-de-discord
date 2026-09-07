@@ -10,61 +10,61 @@ from sqlalchemy import select
 from packages.commerce.services import transition_order
 from packages.database.models import DisputeRecord, Order, PaymentEvent, PaymentIntentRecord
 from packages.database.session import SessionFactory
-from packages.payments.finance import post_ledger_transaction
+from packages.payments.factory import PaymentProviderFactory
 from packages.payments.mercadopago import MercadoPagoPixProvider
+from packages.payments.finance import post_ledger_transaction
 from packages.payments.reliability import enqueue_outbox, next_reconcile_time
 
 router = APIRouter(prefix="/webhooks/payments", tags=["webhooks"])
+payment_providers = PaymentProviderFactory()
 
 
-async def _verified_body(request: Request, provider: MercadoPagoPixProvider) -> tuple[bytes, dict]:
+async def _read_json(request: Request) -> tuple[bytes, dict]:
     raw = await request.body()
     if len(raw) > 2_000_000:
         raise HTTPException(413, "payload_too_large")
-    data_id = request.query_params.get("data.id", "")
-    x_signature = request.headers.get("x-signature")
-    x_request_id = request.headers.get("x-request-id")
-    if not x_signature or not x_request_id or not data_id:
-        raise HTTPException(400, "missing_webhook_security_headers")
-    headers = {"x-signature": x_signature, "x-request-id": x_request_id, "x-data-id": data_id}
-    if not await provider.validate_webhook(headers, raw):
-        raise HTTPException(401, "invalid_webhook_signature")
     try:
         return raw, json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HTTPException(400, "invalid_json") from exc
 
 
-@router.post("/mercadopago_pix", status_code=202)
-async def mercado_pago_webhook(request: Request, x_signature: str | None = Header(default=None), x_request_id: str | None = Header(default=None)) -> dict[str, object]:
-    raw = await request.body()
-    if len(raw) > 2_000_000:
-        raise HTTPException(413, "payload_too_large")
+async def _verify_for_payment(request: Request, raw: bytes, payment: PaymentIntentRecord | None) -> MercadoPagoPixProvider:
+    if payment is None:
+        raise HTTPException(401, "unknown_payment_webhook")
+    x_signature = request.headers.get("x-signature")
+    x_request_id = request.headers.get("x-request-id")
     data_id = request.query_params.get("data.id", "")
     if not x_signature or not x_request_id or not data_id:
         raise HTTPException(400, "missing_webhook_security_headers")
-    provider = MercadoPagoPixProvider()
+    provider = await payment_providers.mercadopago_pix(payment.tenant_id)
     if not await provider.validate_webhook({"x-signature": x_signature, "x-request-id": x_request_id, "x-data-id": data_id}, raw):
         raise HTTPException(401, "invalid_webhook_signature")
-    try:
-        body = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(400, "invalid_json") from exc
-    provider_event_id = str(body.get("id") or f"{x_request_id}:{data_id}")
+    return provider
+
+
+@router.post("/mercadopago_pix", status_code=202)
+async def mercado_pago_webhook(request: Request, x_signature: str | None = Header(default=None), x_request_id: str | None = Header(default=None)) -> dict[str, object]:
+    raw, body = await _read_json(request)
+    data_id = request.query_params.get("data.id", "")
+    if not x_signature or not x_request_id or not data_id:
+        raise HTTPException(400, "missing_webhook_security_headers")
     async with SessionFactory() as session:
+        payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == "mercadopago_pix", PaymentIntentRecord.provider_payment_id == data_id))
+        provider = await _verify_for_payment(request, raw, payment)
+        provider_event_id = str(body.get("id") or f"{x_request_id}:{data_id}")
         async with session.begin():
-            existing = await session.scalar(select(PaymentEvent).where(PaymentEvent.provider == "mercadopago_pix", PaymentEvent.provider_event_id == provider_event_id).with_for_update())
+            existing = await session.scalar(select(PaymentEvent).where(PaymentEvent.provider == provider.name, PaymentEvent.provider_event_id == provider_event_id).with_for_update())
             if existing is not None:
                 return {"accepted": True, "duplicate": True, "event_id": provider_event_id}
-            session.add(PaymentEvent(provider="mercadopago_pix", provider_event_id=provider_event_id, event_type=str(body.get("type") or body.get("action") or "unknown"), payload=body))
+            session.add(PaymentEvent(provider=provider.name, provider_event_id=provider_event_id, event_type=str(body.get("type") or body.get("action") or "unknown"), payload=body))
             await session.flush()
             if body.get("type") != "payment":
                 return {"accepted": True, "event_id": provider_event_id}
             remote = await provider.get_payment(data_id)
             payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == provider.name, PaymentIntentRecord.provider_payment_id == remote.provider_payment_id).with_for_update())
             if payment is None:
-                enqueue_outbox(session, tenant_id=None, aggregate_type="payment", aggregate_id=data_id, event_type="payment.unknown", payload={"provider": provider.name, "provider_payment_id": data_id})
-                return {"accepted": True, "event_id": provider_event_id, "ignored": "unknown_payment"}
+                raise HTTPException(401, "unknown_payment_webhook")
             if remote.amount_minor != payment.amount_minor or remote.currency != payment.currency:
                 raise HTTPException(409, "payment_amount_mismatch")
             previous_status = payment.status
@@ -88,11 +88,23 @@ async def mercado_pago_webhook(request: Request, x_signature: str | None = Heade
 
 @router.post("/mercadopago_chargebacks", status_code=202)
 async def mercado_pago_chargeback_webhook(request: Request) -> dict[str, object]:
-    provider = MercadoPagoPixProvider()
-    raw, body = await _verified_body(request, provider)
+    raw, body = await _read_json(request)
     data_id = request.query_params.get("data.id", "")
-    provider_event_id = str(body.get("id") or f"chargeback:{data_id}")
+    provider_payment_id = str(body.get("data", {}).get("payment_id") or "") or None
     async with SessionFactory() as session:
+        payment = None
+        if provider_payment_id:
+            payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == "mercadopago_pix", PaymentIntentRecord.provider_payment_id == provider_payment_id))
+        if payment is None:
+            raise HTTPException(401, "unknown_chargeback_webhook")
+        x_signature = request.headers.get("x-signature")
+        x_request_id = request.headers.get("x-request-id")
+        if not x_signature or not x_request_id or not data_id:
+            raise HTTPException(400, "missing_webhook_security_headers")
+        provider = await payment_providers.mercadopago_pix(payment.tenant_id)
+        if not await provider.validate_webhook({"x-signature": x_signature, "x-request-id": x_request_id, "x-data-id": data_id}, raw):
+            raise HTTPException(401, "invalid_webhook_signature")
+        provider_event_id = str(body.get("id") or f"chargeback:{data_id}")
         async with session.begin():
             existing_event = await session.scalar(select(PaymentEvent).where(PaymentEvent.provider == provider.name, PaymentEvent.provider_event_id == provider_event_id).with_for_update())
             if existing_event is not None:
@@ -101,13 +113,9 @@ async def mercado_pago_chargeback_webhook(request: Request) -> dict[str, object]
             await session.flush()
             chargeback_id = str(body.get("data", {}).get("id") or data_id)
             remote = await provider.get_chargeback(chargeback_id)
-            provider_payment_id = str(remote.get("payment_id") or body.get("data", {}).get("payment_id") or "") or None
-            payment = None
-            if provider_payment_id:
-                payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == provider.name, PaymentIntentRecord.provider_payment_id == provider_payment_id).with_for_update())
-            amount_minor = None
-            if remote.get("amount") is not None:
-                amount_minor = int((Decimal(str(remote["amount"])) * 100).quantize(Decimal("1")))
+            provider_payment_id = str(remote.get("payment_id") or provider_payment_id or "") or None
+            payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == provider.name, PaymentIntentRecord.provider_payment_id == provider_payment_id).with_for_update()) if provider_payment_id else None
+            amount_minor = int((Decimal(str(remote["amount"])) * 100).quantize(Decimal("1"))) if remote.get("amount") is not None else None
             dispute = await session.scalar(select(DisputeRecord).where(DisputeRecord.provider == provider.name, DisputeRecord.provider_dispute_id == chargeback_id).with_for_update())
             if dispute is None:
                 dispute = DisputeRecord(provider=provider.name, provider_dispute_id=chargeback_id)
