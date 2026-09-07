@@ -17,6 +17,12 @@ Discord App → Discord Layer → Service Layer → Commerce / Payments / Invent
 - httpx
 - Docker + GitHub Actions
 
+## Fase 2/3 implementada
+
+A persistência de produtos saiu do armazenamento em memória e passou para PostgreSQL. O domínio agora possui `Cart`, `CartItem`, `OrderItem` e `InventoryReservation`, com migrations Alembic (`0001_core` e `0002_cart_checkout`). O checkout recalcula os preços no servidor, bloqueia as linhas de produto dentro da transação, reserva estoque e transforma o carrinho em pedido de forma atômica.
+
+A chave de idempotência do pedido continua protegida por constraint única. A máquina de estados impede transições arbitrárias e mantém estados terminais explícitos.
+
 ## Discord 2026
 
 O projeto foi auditado contra a documentação oficial atual. Application Commands, user/guild installation, OAuth2, Components, Modals, Account Linking e monetização oficial são tratados segundo o suporte e as restrições documentadas. Veja `DISCORD_COMPATIBILITY.md`.
@@ -30,6 +36,7 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+alembic upgrade head
 uvicorn apps.api.main:app --reload
 ```
 
@@ -45,18 +52,20 @@ Docker:
 docker compose up --build
 ```
 
-## Endpoints iniciais
+## Endpoints atuais
 
 - `GET /health`
 - `GET /ready`
 - `GET /api/v1/products`
 - `POST /api/v1/products`
 - `GET /api/v1/products/{product_id}`
+- `POST /api/v1/cart/items` com `X-Discord-User-ID`
+- `POST /api/v1/checkout` com `X-Discord-User-ID` e `idempotency_key`
 - `POST /webhooks/payments/{provider}`
 
 ## Regras financeiras
 
-Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação deve recalcular o checkout no servidor. Eventos de pagamento devem ser persistidos com `provider_event_id` único antes de executar efeitos.
+Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação recalcula o checkout no servidor. Eventos de pagamento devem ser persistidos com `provider_event_id` único antes de executar efeitos.
 
 ## Produção
 
@@ -64,12 +73,11 @@ Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, sec
 
 ## Próximas fases
 
-1. Persistência completa e Alembic.
-2. Carrinho, reservas transacionais e state machine de pedidos.
-3. Adaptadores PIX/Mercado Pago/Stripe.
-4. Entrega digital e Discord Roles.
-5. Cupons, cashback, afiliados e VIP.
-6. Tickets, reembolsos e disputas.
-7. Dashboard Next.js/TypeScript.
-8. OpenTelemetry, métricas, Sentry e reconciliação.
-9. Hardening, testes de concorrência e deploy.
+1. Adaptadores PIX/Mercado Pago/Stripe com assinatura e reconciliação reais.
+2. Reserva com expiração/release e workers assíncronos.
+3. Entrega digital e Discord Roles.
+4. Cupons, cashback, afiliados e VIP.
+5. Tickets, reembolsos e disputas.
+6. Dashboard Next.js/TypeScript + OAuth2/account linking.
+7. OpenTelemetry, métricas, Sentry e alertas.
+8. Hardening, testes de concorrência E2E e deploy de produção.
