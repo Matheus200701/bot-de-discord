@@ -1,31 +1,39 @@
 # Discord Commerce Platform 2026
 
-Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + observabilidade, em vez de um bot monolítico.
+Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + dashboard + observabilidade, em vez de um bot monolítico.
+
+## Fase 10 — Dashboard + OAuth2 + Account Linking + RBAC
+
+O painel administrativo agora possui autenticação baseada no Discord e isolamento multi-tenant.
+
+- **OAuth2 Authorization Code:** login pelo Discord com `identify guilds`, callback HTTPS e `state` de uso único armazenado com hash; o cookie `state` também é validado para reduzir risco de CSRF.
+- **Sessão web:** cookie `HttpOnly`, `Secure`, `SameSite=Lax`, token aleatório armazenado somente como hash no PostgreSQL e revogação no logout.
+- **Identidade Discord:** `DashboardUser` vincula o usuário do painel ao `discord_user_id`.
+- **Account linking:** a conta Discord é a identidade autenticada do dashboard; o backend nunca aceita um Discord user ID enviado pelo cliente para definir o administrador.
+- **Multi-tenant:** cada servidor autorizado é representado por `Tenant`; o usuário recebe membership somente em guilds onde é owner ou possui `MANAGE_GUILD`.
+- **RBAC:** `OWNER`, `ADMIN`, `OPERATOR` e `VIEWER`, aplicados no backend antes de consultar dados do tenant.
+- **Auditoria:** estrutura `AuditLog` preparada para registrar ações administrativas e recursos afetados.
+- **Dashboard:** visão geral, faturamento, pedidos recentes, produtos, tenant selecionado e papel RBAC.
+
+As APIs OAuth do Discord usam `application/x-www-form-urlencoded` no token endpoint e recomendam o parâmetro `state` para proteção contra CSRF. Os escopos utilizados são `identify` e `guilds`. citeturn829118view0
+
+### Rotas de autenticação
+
+- `GET /api/v1/auth/discord/login`
+- `GET /api/v1/auth/discord/callback`
+- `POST /api/v1/auth/discord/logout`
+- `GET /api/v1/auth/discord/me`
+
+### APIs do dashboard
+
+- `GET /api/v1/dashboard/{tenant_id}/overview`
+- `GET /api/v1/dashboard/{tenant_id}/products`
+- `GET /api/v1/dashboard/{tenant_id}/orders`
+- `GET /api/v1/dashboard/{tenant_id}/members`
 
 ## Fase 9 — cupons, cashback, afiliados e VIP
 
-O checkout agora suporta promoções e fidelização sem usar `float` para valores financeiros.
-
-- **Cupons:** percentual em basis points ou valor fixo, validade, moeda, pedido mínimo, limite global e por usuário, limite de desconto e consumo idempotente.
-- **Cashback:** carteira por tenant/usuário e ledger append-only; créditos são gerados após pagamento confirmado e possuem chave de idempotência.
-- **Afiliados:** códigos únicos por tenant, comissão configurável em basis points e atribuição idempotente por pedido.
-- **VIP:** níveis baseados em gasto confirmado, com desconto e cashback próprios; o nível é recalculado a partir dos pedidos pagos em vez de depender de contador financeiro mutável.
-- **Snapshot do pedido:** `order_promotions` registra cupom, afiliado, desconto e cashback aplicado no checkout.
-
-### Exemplos
-
-Checkout com promoção:
-
-`POST /api/v1/checkout` com `coupon_code` e/ou `affiliate_code`.
-
-Administração:
-
-- `POST /api/v1/promotions/coupons`
-- `POST /api/v1/promotions/affiliates`
-- `POST /api/v1/promotions/vip/tiers`
-- `GET /api/v1/promotions/cashback/{discord_user_id}`
-
-As rotas administrativas usam a credencial existente `X-Commerce-Admin-Key`; autenticação/RBAC granular continua planejada para a camada administrativa definitiva.
+O checkout suporta promoções e fidelização com valores financeiros em unidades menores e percentuais em basis points.
 
 ## Fase 8 — entrega digital e Discord Roles
 
@@ -35,32 +43,13 @@ A confirmação do pagamento dispara fulfillment assíncrono através do outbox.
 
 A base anterior inclui checkout transacional, reservas de estoque, Mercado Pago Pix, webhooks assinados, reconciliação, outbox/retries/circuit breaker, refunds, disputes/chargebacks e ledger de partidas dobradas.
 
-## Endpoints principais
-
-- `GET /health`
-- `GET /ready`
-- `GET /api/v1/products`
-- `POST /api/v1/products`
-- `POST /api/v1/cart/items`
-- `POST /api/v1/checkout`
-- `POST /api/v1/payments/mercadopago/pix`
-- `GET /api/v1/orders/{order_id}/deliveries`
-- `POST /api/v1/orders/{order_id}/refund`
-- `POST /api/v1/promotions/coupons`
-- `POST /api/v1/promotions/affiliates`
-- `POST /api/v1/promotions/vip/tiers`
-- `GET /api/v1/promotions/cashback/{discord_user_id}`
-
-## Regras financeiras
-
-Valores monetários permanecem em unidades menores inteiras. Percentuais são representados em basis points. Cashback, comissão e descontos são idempotentes e associados ao tenant. O preço final é calculado no servidor.
-
 ## Produção
 
-Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, HTTPS, OAuth2, credenciais Discord/PSP, `COMMERCE_ADMIN_KEY` forte, permissões mínimas e políticas LGPD. Execute CI, migrations, testes de restauração, concorrência e sandbox E2E antes de remover o estado Draft do PR.
+Configure HTTPS real para OAuth2, `OAUTH_REDIRECT_URI` registrado no Developer Portal, secrets manager, PostgreSQL/Redis gerenciados, credenciais Discord/PSP, permissões mínimas e políticas LGPD. O painel não deve voltar a usar `X-Discord-User-ID` ou `X-Commerce-Admin-Key` como substituto de autenticação administrativa quando exposto em produção.
+
+Execute CI, migrations, testes de restauração, concorrência, OAuth2 e sandbox E2E antes de habilitar vendas reais.
 
 ## Próximas fases
 
-1. Dashboard Next.js/TypeScript + OAuth2/account linking + RBAC.
-2. OpenTelemetry, métricas, Sentry e alertas.
-3. Hardening, testes E2E de concorrência, sandbox, segurança e deploy de produção.
+1. OpenTelemetry, métricas, Sentry e alertas.
+2. Hardening, testes E2E de concorrência, sandbox, segurança e deploy de produção.
