@@ -4,7 +4,7 @@ import os
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,10 @@ from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
 from packages.database.models import CartItem, Product
 from packages.database.session import SessionFactory
+from packages.payments.mercadopago import MercadoPagoPixProvider, MercadoPagoError
+from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.2.0")
+app = FastAPI(title="Discord Commerce API", version="0.3.0")
 app.include_router(webhook_router)
 DEFAULT_TENANT_ID = UUID(os.getenv("DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"))
 
@@ -38,6 +40,12 @@ class CartItemIn(BaseModel):
 
 
 class CheckoutIn(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class PaymentIn(BaseModel):
+    order_id: UUID
+    payer_email: EmailStr
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
@@ -124,21 +132,57 @@ async def checkout(
 ) -> dict[str, object]:
     try:
         async with session.begin():
-            order = await create_order_from_cart(
-                session,
-                DEFAULT_TENANT_ID,
-                x_discord_user_id,
-                data.idempotency_key,
-            )
-            return {
-                "id": str(order.id),
-                "status": order.status,
-                "currency": order.currency,
-                "total_minor": order.total_minor,
-            }
+            order = await create_order_from_cart(session, DEFAULT_TENANT_ID, x_discord_user_id, data.idempotency_key)
+            return {"id": str(order.id), "status": order.status, "currency": order.currency, "total_minor": order.total_minor}
     except OutOfStock as exc:
         await session.rollback()
         raise HTTPException(409, {"code": "out_of_stock", "sku": str(exc)}) from exc
+    except CommerceError as exc:
+        await session.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        await session.close()
+
+
+@app.post("/api/v1/payments/mercadopago/pix", status_code=201)
+async def create_pix_payment(
+    data: PaymentIn,
+    x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, object]:
+    try:
+        async with session.begin():
+            order = await session.scalar(
+                select(__import__("packages.database.models", fromlist=["Order"]).Order).where(
+                    __import__("packages.database.models", fromlist=["Order"]).Order.id == data.order_id,
+                    __import__("packages.database.models", fromlist=["Order"]).Order.tenant_id == DEFAULT_TENANT_ID,
+                    __import__("packages.database.models", fromlist=["Order"]).Order.discord_user_id == x_discord_user_id,
+                )
+            )
+            if order is None:
+                raise HTTPException(404, "order_not_found")
+            record = await create_payment_intent(
+                session,
+                MercadoPagoPixProvider(),
+                DEFAULT_TENANT_ID,
+                data.order_id,
+                str(data.payer_email),
+                data.idempotency_key,
+            )
+            return {
+                "id": str(record.id),
+                "provider": record.provider,
+                "provider_payment_id": record.provider_payment_id,
+                "status": record.status,
+                "amount_minor": record.amount_minor,
+                "currency": record.currency,
+                "checkout_url": record.checkout_url,
+                "qr_code": record.qr_code,
+                "qr_code_text": record.qr_code_text,
+            }
+    except MercadoPagoError as exc:
+        await session.rollback()
+        raise HTTPException(502, str(exc)) from exc
     except CommerceError as exc:
         await session.rollback()
         raise HTTPException(400, str(exc)) from exc
