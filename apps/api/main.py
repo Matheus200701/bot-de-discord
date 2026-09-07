@@ -11,13 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
-from packages.database.models import Order, Product
+from packages.database.models import FulfillmentRecord, Order, Product
 from packages.database.session import SessionFactory
 from packages.payments.finance import request_refund
 from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.4.0")
+app = FastAPI(title="Discord Commerce API", version="0.5.0")
 app.include_router(webhook_router)
 DEFAULT_TENANT_ID = UUID(os.getenv("DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"))
 
@@ -29,6 +29,7 @@ class ProductIn(BaseModel):
     currency: str = Field(default="BRL", min_length=3, max_length=3)
     stock_quantity: int = Field(default=0, ge=0)
     description: str | None = Field(default=None, max_length=5000)
+    metadata_json: dict = Field(default_factory=dict)
 
 
 class ProductOut(ProductIn):
@@ -159,13 +160,49 @@ async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..
         await session.close()
 
 
-@app.post("/api/v1/orders/{order_id}/refund", status_code=202)
-async def create_refund(
+@app.get("/api/v1/orders/{order_id}/deliveries")
+async def order_deliveries(
     order_id: UUID,
-    data: RefundIn,
-    x_admin_key: str | None = Header(default=None, alias="X-Commerce-Admin-Key"),
+    x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"),
     session: AsyncSession = Depends(db_session),
-) -> dict[str, object]:
+) -> list[dict[str, object | None]]:
+    try:
+        order = await session.scalar(
+            select(Order).where(
+                Order.id == order_id,
+                Order.tenant_id == DEFAULT_TENANT_ID,
+                Order.discord_user_id == x_discord_user_id,
+            )
+        )
+        if order is None:
+            raise HTTPException(404, "order_not_found")
+        records = await session.scalars(
+            select(FulfillmentRecord)
+            .where(
+                FulfillmentRecord.order_id == order_id,
+                FulfillmentRecord.tenant_id == DEFAULT_TENANT_ID,
+            )
+            .order_by(FulfillmentRecord.created_at)
+        )
+        return [
+            {
+                "id": str(record.id),
+                "product_id": str(record.product_id),
+                "type": record.delivery_type,
+                "status": record.status,
+                "delivery_url": record.delivery_url if record.delivery_type == "digital_link" and record.status == "DELIVERED" else None,
+                "guild_id": record.discord_guild_id,
+                "role_id": record.discord_role_id,
+                "delivered_at": record.delivered_at.isoformat() if record.delivered_at else None,
+            }
+            for record in records
+        ]
+    finally:
+        await session.close()
+
+
+@app.post("/api/v1/orders/{order_id}/refund", status_code=202)
+async def create_refund(order_id: UUID, data: RefundIn, x_admin_key: str | None = Header(default=None, alias="X-Commerce-Admin-Key"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     configured_key = os.getenv("COMMERCE_ADMIN_KEY")
     if not configured_key:
         await session.close()
@@ -175,14 +212,7 @@ async def create_refund(
         raise HTTPException(403, "forbidden")
     try:
         async with session.begin():
-            refund = await request_refund(
-                session,
-                tenant_id=DEFAULT_TENANT_ID,
-                order_id=order_id,
-                amount_minor=data.amount_minor,
-                idempotency_key=data.idempotency_key,
-                reason=data.reason,
-            )
+            refund = await request_refund(session, tenant_id=DEFAULT_TENANT_ID, order_id=order_id, amount_minor=data.amount_minor, idempotency_key=data.idempotency_key, reason=data.reason)
             return {"id": str(refund.id), "status": refund.status, "amount_minor": refund.amount_minor, "currency": refund.currency}
     except CommerceError as exc:
         await session.rollback()
