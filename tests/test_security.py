@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from starlette.testclient import TestClient
 
 from apps.api.security import SecurityMiddleware
@@ -35,17 +37,37 @@ def test_security_middleware_rejects_oversized_content_length(monkeypatch) -> No
 
 def test_security_middleware_rejects_streamed_oversize(monkeypatch) -> None:
     monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "3")
+    sent: list[dict] = []
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"ab", "more_body": True},
+            {"type": "http.request", "body": b"cd", "more_body": False},
+        ]
+    )
 
     async def app(scope, receive, send):
         await receive()
         await receive()
-        raise AssertionError("application should not continue after oversized chunk")
 
-    client = TestClient(SecurityMiddleware(app))
-    response = client.post("/", headers={"host": "testserver"}, content=b"abcd")
+    async def receive():
+        return next(messages)
 
-    assert response.status_code == 413
-    assert response.text == "request_too_large"
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/",
+        "headers": [(b"host", b"testserver")],
+        "query_string": b"",
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    asyncio.run(SecurityMiddleware(app)(scope, receive, send))
+
+    assert sent[0]["status"] == 413
+    assert sent[1]["body"] == b"request_too_large"
 
 
 def test_security_middleware_rejects_unsupported_method() -> None:
