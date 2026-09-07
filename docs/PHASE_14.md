@@ -9,6 +9,7 @@ Transformar os gates de produção documentados na Fase 13 em verificações exe
 - PostgreSQL 16 e Redis 7 como serviços no GitHub Actions.
 - `alembic upgrade head` executado contra banco descartável.
 - Smoke integration test real para PostgreSQL e Redis.
+- Verificação concorrente de `INCR` no Redis.
 - Primitiva de rate limiting distribuído com Redis usando janela fixa e expiração da chave.
 - Teste unitário do limite distribuído.
 - Testes adicionais de security middleware para `TRACE` e `TRUSTED_HOSTS`.
