@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, HTTPException, Response
@@ -13,21 +15,41 @@ from packages.database.session import SessionFactory
 
 router = APIRouter(prefix="/api/v1/auth/discord", tags=["auth"])
 SESSION_COOKIE = "commerce_session"
+STATE_COOKIE = "commerce_oauth_state"
 
 
 @router.get("/login", response_class=RedirectResponse)
-async def login() -> RedirectResponse:
+async def login(response: Response) -> RedirectResponse:
     session = SessionFactory()
     try:
         async with session.begin():
             state = await begin_oauth(session)
-        return RedirectResponse(oauth_authorize_url(state), status_code=302, headers={"Cache-Control": "no-store"})
+        redirect = RedirectResponse(oauth_authorize_url(state), status_code=302, headers={"Cache-Control": "no-store"})
+        redirect.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True, secure=True, samesite="lax", path="/")
+        return redirect
+    finally:
+        await session.close()
+
+
+@router.get("/link", response_class=RedirectResponse)
+async def link_discord(response: Response, session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE)) -> RedirectResponse:
+    session = SessionFactory()
+    try:
+        if await get_session_user(session, session_token) is None:
+            raise HTTPException(401, "authentication_required")
+        async with session.begin():
+            state = await begin_oauth(session)
+        redirect = RedirectResponse(oauth_authorize_url(state), status_code=302, headers={"Cache-Control": "no-store"})
+        redirect.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True, secure=True, samesite="lax", path="/")
+        return redirect
     finally:
         await session.close()
 
 
 @router.get("/callback")
-async def callback(code: str, state: str) -> Response:
+async def callback(code: str, state: str, oauth_state: str | None = Cookie(default=None, alias=STATE_COOKIE)) -> Response:
+    if not oauth_state or not secrets.compare_digest(oauth_state, state):
+        raise HTTPException(400, "oauth_state_mismatch")
     session = SessionFactory()
     try:
         async with session.begin():
@@ -40,6 +62,7 @@ async def callback(code: str, state: str) -> Response:
             session_token = await create_session(session, user)
         response = RedirectResponse("/", status_code=302, headers={"Cache-Control": "no-store"})
         response.set_cookie(SESSION_COOKIE, session_token, max_age=604800, httponly=True, secure=True, samesite="lax", path="/")
+        response.delete_cookie(STATE_COOKIE, path="/")
         return response
     except HTTPException:
         raise
@@ -77,16 +100,7 @@ async def me(session_token: str | None = Cookie(default=None, alias=SESSION_COOK
             .where(TenantMembership.user_id == user.id, TenantMembership.active.is_(True), Tenant.active.is_(True))
             .order_by(Tenant.name)
         )
-        return {
-            "id": str(user.id),
-            "discord_user_id": user.discord_user_id,
-            "username": user.username,
-            "global_name": user.global_name,
-            "tenants": [
-                {"id": str(row.id), "guild_id": row.discord_guild_id, "name": row.name, "role": row.role}
-                for row in memberships
-            ],
-        }
+        return {"id": str(user.id), "discord_user_id": user.discord_user_id, "username": user.username, "global_name": user.global_name, "tenants": [{"id": str(row.id), "guild_id": row.discord_guild_id, "name": row.name, "role": row.role} for row in memberships]}
     finally:
         await session.close()
 
@@ -98,7 +112,7 @@ def _allowed(role: str, minimum: str) -> bool:
 
 async def tenant_context(tenant_id: str, session_token: str | None, minimum_role: str = "VIEWER"):
     try:
-        tenant_uuid = __import__("uuid").UUID(tenant_id)
+        tenant_uuid = uuid.UUID(tenant_id)
     except ValueError as exc:
         raise HTTPException(400, "invalid_tenant_id") from exc
     session = SessionFactory()
@@ -106,14 +120,9 @@ async def tenant_context(tenant_id: str, session_token: str | None, minimum_role
     if user is None:
         await session.close()
         raise HTTPException(401, "authentication_required")
-    membership = await session.scalar(
-        select(TenantMembership).where(
-            TenantMembership.tenant_id == tenant_uuid,
-            TenantMembership.user_id == user.id,
-            TenantMembership.active.is_(True),
-        )
-    )
-    if membership is None or not _allowed(membership.role, minimum_role):
+    membership = await session.scalar(select(TenantMembership).where(TenantMembership.tenant_id == tenant_uuid, TenantMembership.user_id == user.id, TenantMembership.active.is_(True)))
+    tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_uuid, Tenant.active.is_(True)))
+    if tenant is None or membership is None or not _allowed(membership.role, minimum_role):
         await session.close()
         raise HTTPException(403, "tenant_access_denied")
     return session, user, membership, tenant_uuid
