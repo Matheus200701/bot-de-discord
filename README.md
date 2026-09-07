@@ -4,14 +4,14 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 
 ## Fase 11 — Observabilidade
 
-A plataforma agora possui uma camada de observabilidade opcional e segura:
+A plataforma possui uma camada de observabilidade opcional e segura:
 
-- **OpenTelemetry:** traces e métricas com resource attributes de serviço/versão/ambiente.
+- **OpenTelemetry:** traces e métricas com atributos de serviço, versão e ambiente.
 - **Instrumentação:** FastAPI, SQLAlchemy e HTTPX.
-- **Sentry:** captura de exceções e tracing opcional, sem PII padrão; cookies, headers e payload de request são removidos antes do envio.
+- **Sentry:** captura opcional de exceções e tracing, sem PII padrão; cookies, headers e payloads de request são removidos antes do envio.
 - **Bootstrap precoce:** `sitecustomize.py` inicializa a telemetria antes dos imports da aplicação.
+- **OTLP:** endpoints separados para traces e metrics, com suporte a headers de autenticação.
 - **Operação:** SLOs, alertas e runbook em `docs/OBSERVABILITY.md`.
-- **Privacidade:** nenhum token, cookie, segredo PSP ou dado financeiro deve ser enviado como atributo de telemetria.
 
 Configuração principal no `.env`:
 
