@@ -20,3 +20,4 @@ def test_supported_delivery_types_are_explicit() -> None:
 def test_order_state_exposes_fulfillment_window() -> None:
     assert "FULFILLING" in ORDER_TRANSITIONS["PAID"]
     assert "FULFILLED" in ORDER_TRANSITIONS["FULFILLING"]
+    assert "REFUND_PENDING" in ORDER_TRANSITIONS["FULFILLED"]
