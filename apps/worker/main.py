@@ -19,6 +19,7 @@ from packages.payments.reliability import (
     OUTBOX_BASE_DELAY_SECONDS,
     OUTBOX_MAX_DELAY_SECONDS,
     OutboxDispatcher,
+    enqueue_outbox,
     exponential_backoff,
     reconcile_payment,
 )
@@ -208,21 +209,20 @@ async def execute_refund(session, event: OutboxEvent, provider: MercadoPagoPixPr
         if order is not None and order.status in {"REFUND_PENDING", "FULFILLING", "FULFILLED"}:
             if order.status == "REFUND_PENDING":
                 await transition_order(session, refund.order_id, refund.tenant_id, "REFUNDED")
-            enqueue_ids = [str(row.id) for row in (await session.scalars(
+            rows = await session.scalars(
                 select(FulfillmentRecord).where(
                     FulfillmentRecord.order_id == refund.order_id,
                     FulfillmentRecord.status == "DELIVERED",
                 )
-            )).all()]
-            for fulfillment_id in enqueue_ids:
-                from packages.payments.reliability import enqueue_outbox
+            )
+            for record in rows:
                 enqueue_outbox(
                     session,
                     tenant_id=refund.tenant_id,
                     aggregate_type="fulfillment",
-                    aggregate_id=fulfillment_id,
+                    aggregate_id=str(record.id),
                     event_type="fulfillment.revoke",
-                    payload={"fulfillment_id": fulfillment_id},
+                    payload={"fulfillment_id": str(record.id)},
                 )
 
 
@@ -231,8 +231,18 @@ async def execute_fulfillment(session, event: OutboxEvent, role_delivery: Discor
     record = await session.scalar(
         select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
     )
-    if record is None or record.status == "DELIVERED":
+    if record is None or record.status in {"DELIVERED", "REVOKED"}:
         return
+    order = await session.scalar(
+        select(Order).where(Order.id == record.order_id, Order.tenant_id == record.tenant_id).with_for_update()
+    )
+    if order is None or order.status in {"REFUND_PENDING", "REFUNDED", "CANCELLED", "EXPIRED"}:
+        record.status = "REVOKED"
+        record.revoked_at = datetime.now(timezone.utc)
+        return
+    if order.status not in {"PAID", "FULFILLING"}:
+        raise RuntimeError(f"order_not_ready_for_fulfillment:{order.status if order else 'missing'}")
+
     record.status = "PROCESSING"
     if record.delivery_type == "digital_link":
         if not record.delivery_url:
@@ -269,11 +279,7 @@ async def main() -> None:
         LOGGER.info("Outbox event %s type=%s aggregate=%s", event.id, event.event_type, event.aggregate_id)
 
     async def fulfillment_prepare_handler(session, event: OutboxEvent) -> None:
-        await prepare_order_fulfillment(
-            session,
-            UUID(str(event.payload["order_id"])),
-            UUID(str(event.tenant_id)),
-        )
+        await prepare_order_fulfillment(session, UUID(str(event.payload["order_id"])), UUID(str(event.tenant_id)))
 
     async def fulfillment_handler(session, event: OutboxEvent) -> None:
         await execute_fulfillment(session, event, role_delivery)
