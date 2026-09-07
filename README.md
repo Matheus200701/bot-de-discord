@@ -15,7 +15,7 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 
 O rate limiter não é aplicado globalmente: limites devem ser definidos por rota e risco operacional. Antes do go-live, autenticação, mutations financeiras, administração e webhooks devem receber políticas específicas.
 
-A Fase 14 não declara readiness de produção. O workflow precisa executar e passar no GitHub. Ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado e validação HTTPS/load balancer.
+A Fase 14 não declara readiness de produção. O workflow precisa executar e passar no GitHub. Ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado, backup/restore e validação HTTPS/load balancer.
 
 ## Fase 13 — Security & Production Release Gate
 
