@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select
 
-from packages.commerce.services import CommerceError, transition_order
+from packages.commerce.services import transition_order
 from packages.database.models import Order, PaymentEvent, PaymentIntentRecord
 from packages.database.session import SessionFactory
 from packages.payments.mercadopago import MercadoPagoPixProvider
