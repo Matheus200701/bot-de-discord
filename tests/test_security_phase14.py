@@ -21,10 +21,8 @@ def test_trace_is_rejected() -> None:
 def test_trusted_host_allowlist(monkeypatch) -> None:
     monkeypatch.setenv("TRUSTED_HOSTS", "api.example.test")
     client = TestClient(SecurityMiddleware(_app))
-
     denied = client.get("/", headers={"host": "evil.example.test"})
     allowed = client.get("/", headers={"host": "api.example.test"})
-
     assert denied.status_code == 400
     assert denied.text == "invalid_host"
     assert allowed.status_code == 200
