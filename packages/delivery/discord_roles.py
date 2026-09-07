@@ -26,6 +26,8 @@ class DiscordRoleDelivery:
                 },
             )
         if response.is_error:
+            if response.status_code == 429:
+                raise DiscordDeliveryError("discord_rate_limited")
             raise DiscordDeliveryError(f"discord_http_{response.status_code}")
         return response
 
