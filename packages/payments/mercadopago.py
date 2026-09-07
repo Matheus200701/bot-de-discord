@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -35,9 +37,7 @@ class MercadoPagoPixProvider(PaymentProvider):
     async def create_payment(self, *, order_id: str, amount_minor: int, currency: str, metadata: dict[str, str]) -> PaymentIntent:
         if currency.upper() != "BRL":
             raise MercadoPagoError("pix_currency_must_be_brl")
-        # Mercado Pago's Pix Payment API uses decimal major units and requires
-        # X-Idempotency-Key. Never derive the amount from client input here.
-        amount = f"{amount_minor / 100:.2f}"
+        amount = Decimal(amount_minor) / Decimal(100)
         payload = {
             "transaction_amount": float(amount),
             "description": metadata.get("description", f"Pedido {order_id}"),
@@ -64,7 +64,7 @@ class MercadoPagoPixProvider(PaymentProvider):
 
     async def get_payment(self, provider_payment_id: str) -> PaymentIntent:
         data = await self._request("GET", f"/v1/payments/{provider_payment_id}")
-        amount_minor = round(float(data.get("transaction_amount", 0)) * 100)
+        amount_minor = int((Decimal(str(data.get("transaction_amount", "0"))) * 100).quantize(Decimal("1")))
         point = data.get("point_of_interaction", {}).get("transaction_data", {})
         return PaymentIntent(
             provider_payment_id=str(data["id"]),
@@ -80,13 +80,10 @@ class MercadoPagoPixProvider(PaymentProvider):
         await self._request("PUT", f"/v1/payments/{provider_payment_id}", json={"status": "cancelled"})
 
     async def refund_payment(self, provider_payment_id: str, amount_minor: int | None = None) -> None:
-        payload = {} if amount_minor is None else {"amount": amount_minor / 100}
+        payload = {} if amount_minor is None else {"amount": float(Decimal(amount_minor) / Decimal(100))}
         await self._request("POST", f"/v1/payments/{provider_payment_id}/refunds", json=payload)
 
     async def validate_webhook(self, headers: dict[str, str], raw_body: bytes) -> bool:
-        # Mercado Pago signs the notification manifest using x-signature and
-        # x-request-id plus the data.id query parameter. The API adapter receives
-        # data.id through the normalized header supplied by the webhook boundary.
         signature = headers.get("x-signature", "")
         request_id = headers.get("x-request-id", "")
         data_id = headers.get("x-data-id", "")
@@ -99,5 +96,4 @@ class MercadoPagoPixProvider(PaymentProvider):
         return hmac.compare_digest(expected, provided)
 
     async def parse_webhook_event(self, raw_body: bytes) -> dict[str, Any]:
-        import json
         return json.loads(raw_body)
