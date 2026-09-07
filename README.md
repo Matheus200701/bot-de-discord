@@ -50,7 +50,7 @@ Entregas possuem estados persistentes (`PENDING`, `PROCESSING`, `DELIVERED`, `FA
 
 ### Discord Role Delivery
 
-A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment.
+A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment. citeturn431877view0turn198211view0
 
 ## Fases 2–7
 
