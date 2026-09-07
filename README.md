@@ -19,7 +19,7 @@ Discord App → Discord Layer → Service Layer → Commerce / Payments / Invent
 
 ## Fase 8 — entrega digital e Discord Roles
 
-A confirmação do pagamento agora dispara fulfillment assíncrono através do outbox. O produto declara seu tipo de entrega em `metadata_json.delivery`.
+A confirmação do pagamento dispara fulfillment assíncrono através do outbox. O produto declara seu tipo de entrega em `metadata_json.delivery`.
 
 Exemplo de cargo Discord:
 
@@ -50,7 +50,7 @@ Entregas possuem estados persistentes (`PENDING`, `PROCESSING`, `DELIVERED`, `FA
 
 ### Discord Role Delivery
 
-A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment.
+A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. Respostas de rate limit são devolvidas ao sistema de retry do outbox.
 
 ## Fases 2–7
 
