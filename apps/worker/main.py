@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
 from packages.commerce.services import transition_order
-from packages.database.models import OutboxEvent, PaymentIntentRecord, RefundRecord
+from packages.database.models import Order, OutboxEvent, PaymentIntentRecord, RefundRecord
 from packages.database.session import SessionFactory
 from packages.payments.finance import post_ledger_transaction
 from packages.payments.mercadopago import MercadoPagoPixProvider
@@ -63,6 +64,17 @@ async def process_outbox(dispatcher: OutboxDispatcher) -> int:
                     event.last_error = str(exc)[:4000]
                     if event.attempts >= MAX_OUTBOX_ATTEMPTS:
                         event.status = "DEAD"
+                        if event.event_type == "refund.execute":
+                            refund_id = event.payload.get("refund_id")
+                            if refund_id:
+                                refund = await session.scalar(select(RefundRecord).where(RefundRecord.id == UUID(str(refund_id))).with_for_update())
+                                if refund is not None and refund.status not in {"APPROVED", "CANCELLED"}:
+                                    refund.status = "FAILED"
+                                    refund.last_error = str(exc)[:4000]
+                                if refund is not None:
+                                    order = await session.scalar(select(Order).where(Order.id == refund.order_id, Order.tenant_id == refund.tenant_id).with_for_update())
+                                    if order is not None and order.status == "REFUND_PENDING":
+                                        await transition_order(session, refund.order_id, refund.tenant_id, "REFUND_FAILED")
                     else:
                         event.status = "PENDING"
                         event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=exponential_backoff(event.attempts, OUTBOX_BASE_DELAY_SECONDS, OUTBOX_MAX_DELAY_SECONDS))
@@ -84,7 +96,8 @@ async def reconcile_due_payments(provider: MercadoPagoPixProvider) -> int:
 
 
 async def execute_refund(session, event: OutboxEvent, provider: MercadoPagoPixProvider) -> None:
-    refund = await session.scalar(select(RefundRecord).where(RefundRecord.id == UUID(event.payload["refund_id"])).with_for_update())
+    refund_id = UUID(str(event.payload["refund_id"]))
+    refund = await session.scalar(select(RefundRecord).where(RefundRecord.id == refund_id).with_for_update())
     if refund is None or refund.status == "APPROVED":
         return
     payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.id == refund.payment_intent_id).with_for_update())
@@ -98,7 +111,7 @@ async def execute_refund(session, event: OutboxEvent, provider: MercadoPagoPixPr
     await post_ledger_transaction(session, tenant_id=refund.tenant_id, idempotency_key=f"refund-approved:{refund.id}", reference_type="refund", reference_id=str(refund.id), currency=refund.currency, debit_account="refunds:customer", credit_account=f"cash:{refund.provider}", amount_minor=refund.amount_minor)
     refunded_total = await session.scalar(select(func.coalesce(func.sum(RefundRecord.amount_minor), 0)).where(RefundRecord.payment_intent_id == payment.id, RefundRecord.status == "APPROVED"))
     if int(refunded_total or 0) >= payment.amount_minor:
-        order = await session.scalar(select(__import__("packages.database.models", fromlist=["Order"]).Order).where(__import__("packages.database.models", fromlist=["Order"]).Order.id == refund.order_id, __import__("packages.database.models", fromlist=["Order"]).Order.tenant_id == refund.tenant_id).with_for_update())
+        order = await session.scalar(select(Order).where(Order.id == refund.order_id, Order.tenant_id == refund.tenant_id).with_for_update())
         if order is not None and order.status == "REFUND_PENDING":
             await transition_order(session, refund.order_id, refund.tenant_id, "REFUNDED")
 
@@ -107,14 +120,15 @@ async def main() -> None:
     provider = MercadoPagoPixProvider()
     dispatcher = OutboxDispatcher()
 
-    async def log_payment_event(session, event: OutboxEvent) -> None:
+    async def log_event(session, event: OutboxEvent) -> None:
         LOGGER.info("Outbox event %s type=%s aggregate=%s", event.id, event.event_type, event.aggregate_id)
+
+    for event_type in ("payment.created", "payment.paid", "payment.status.action_required", "payment.status.waiting_payment", "payment.status.cancelled", "payment.status.rejected", "payment.status.expired", "payment.reconciliation_dead_lettered", "payment.unknown", "dispute.updated"):
+        dispatcher.register(event_type, log_event)
 
     async def refund_handler(session, event: OutboxEvent) -> None:
         await execute_refund(session, event, provider)
 
-    for event_type in ("payment.created", "payment.paid", "payment.status.action_required", "payment.status.waiting_payment", "payment.status.cancelled", "payment.status.rejected", "payment.status.expired", "payment.reconciliation_dead_lettered", "payment.unknown"):
-        dispatcher.register(event_type, log_payment_event)
     dispatcher.register("refund.execute", refund_handler)
 
     while True:
@@ -128,5 +142,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    from uuid import UUID
     asyncio.run(main())
