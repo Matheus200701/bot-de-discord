@@ -34,7 +34,7 @@ The implementation is based on the current official Discord Developer Platform d
 
 ## Fase 8 fulfillment
 
-Role delivery uses the official guild-member role mutation endpoints. The application does not request `ADMINISTRATOR`; it requires `MANAGE_ROLES`, avoids managed roles, and relies on Discord's role hierarchy enforcement. Fulfillment is asynchronous and idempotent through the platform's PostgreSQL outbox.
+Role delivery uses the official guild-member role mutation endpoints. The application does not request `ADMINISTRATOR`; it requires `MANAGE_ROLES`, avoids managed roles, and relies on Discord's role hierarchy enforcement. Fulfillment is asynchronous and idempotent through the platform's PostgreSQL outbox. No privileged member-listing intent is needed for direct fulfillment.
 
 ## API version
 
