@@ -10,7 +10,15 @@ class RateLimitExceeded(Exception):
 
 
 class RedisRateLimiter:
-    """Fixed-window distributed limiter; fail closed for protected mutations."""
+    """Fixed-window distributed limiter with an atomic Redis Lua operation."""
+
+    SCRIPT = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+"""
 
     def __init__(self, redis: Redis, limit: int, window_seconds: int) -> None:
         if limit <= 0 or window_seconds <= 0:
@@ -23,9 +31,7 @@ class RedisRateLimiter:
         now = int(time.time())
         bucket = now // self.window_seconds
         redis_key = f"commerce:ratelimit:{key}:{bucket}"
-        count = await self.redis.incr(redis_key)
-        if count == 1:
-            await self.redis.expire(redis_key, self.window_seconds + 1)
+        count = int(await self.redis.eval(self.SCRIPT, 1, redis_key, self.window_seconds + 1))
         if count > self.limit:
             raise RateLimitExceeded(key)
         return self.limit - count
