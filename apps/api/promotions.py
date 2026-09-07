@@ -40,8 +40,7 @@ class VipTierIn(BaseModel):
 
 async def _admin_session(tenant_id: UUID, session_token: str | None, csrf_cookie: str | None, csrf_header: str | None):
     require_csrf(csrf_cookie, csrf_header)
-    session, user, membership, tenant_uuid = await tenant_context(str(tenant_id), session_token, "ADMIN")
-    return session, user, membership, tenant_uuid
+    return await tenant_context(str(tenant_id), session_token, "ADMIN")
 
 
 @router.post("/{tenant_id}/coupons", status_code=201)
@@ -123,8 +122,7 @@ async def cashback_balance(
     discord_user_id: int,
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, object]:
-    session, _, _, tenant_uuid = await _admin_session(tenant_id, session_token, None, None)
-    # Read access is still ADMIN in this endpoint to avoid leaking wallet balances through a public route.
+    session, _, _, tenant_uuid = await tenant_context(str(tenant_id), session_token, "ADMIN")
     try:
         row = (
             await session.execute(
