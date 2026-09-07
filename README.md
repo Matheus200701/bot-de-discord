@@ -2,6 +2,28 @@
 
 Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + observabilidade, em vez de um bot monolítico.
 
+## Fase 13 — Security & Production Release Gate
+
+A plataforma agora possui uma camada adicional de hardening e automação de segurança:
+
+- Limite de body aplicado tanto a `Content-Length` quanto a requisições HTTP em streaming.
+- Allowlist de métodos HTTP; métodos não utilizados como `TRACE` são rejeitados.
+- `TRUSTED_HOSTS`, HSTS opcional e headers de segurança centralizados.
+- Testes para headers, request ID, payload oversized em streaming e métodos proibidos.
+- GitHub Actions separado para CodeQL, Gitleaks e `pip-audit`.
+- Workflow de container com Trivy para vulnerabilidades HIGH/CRITICAL de SO e bibliotecas.
+- `.env.example` documenta os controles de hardening.
+- Checklist de release atualizado em `docs/SECURITY.md`.
+
+A Fase 13 não declara certificação ASVS nem readiness automático para produção. Ainda são necessários E2E reais, testes de concorrência contra PostgreSQL/Redis, sandbox de PSP, secret manager, isolamento de credenciais por tenant, rate limiting distribuído, CSRF completo do dashboard e validação do ambiente HTTPS/load balancer.
+
+## Fase 12 — Hardening de segurança
+
+- Middleware ASGI de segurança e headers defensivos.
+- Request ID/correlação e limites de request.
+- Trusted hosts e HSTS opcional.
+- Baseline de segurança documentado em `docs/SECURITY.md`.
+
 ## Fase 11 — Observabilidade
 
 A plataforma possui uma camada de observabilidade opcional e segura:
@@ -63,6 +85,8 @@ Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, H
 
 ## Próximas fases
 
-1. Hardening de segurança e isolamento multi-tenant completo.
-2. Sandbox/E2E de pagamentos, refunds, fulfillment e concorrência.
-3. Deploy de produção com secrets manager, backups/restauração e políticas de retenção de telemetria.
+1. E2E real com PostgreSQL/Redis em CI e testes de concorrência.
+2. Sandbox/certificação de pagamentos, refunds e fulfillment.
+3. Secret manager e isolamento de credenciais PSP por tenant.
+4. Rate limiting distribuído, CSRF completo e remoção do admin key legado.
+5. Deploy de produção com backups/restauração, HTTPS/load balancer e políticas de retenção.
