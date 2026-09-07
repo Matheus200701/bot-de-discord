@@ -1,26 +1,31 @@
-# Fase 16 — Multi-Tenant Security, Secret Isolation & CSRF
+# Fase 16 — Multi-Tenant Security, Managed Secrets & CSRF
 
 ## Objetivo
 
-Reduzir os principais riscos restantes de autorização administrativa e credenciais PSP antes da preparação de produção.
+Reduzir o blast radius entre tenants e remover a dependência de credenciais PSP globais. OWASP ASVS 5.0 é usado como referência de verificação, sem alegar certificação.
 
-## Entregas desta fase
+## Entregas
 
 - Double-submit CSRF para mutações autenticadas por cookie do Dashboard.
 - Token CSRF aleatório por sessão/login, cookie `Secure` + `SameSite=Lax` e header obrigatório em mutações.
-- Logout do Dashboard atualizado para enviar o token CSRF.
-- Resolver de secrets com namespace por tenant para credenciais Mercado Pago.
-- Fallback para `MERCADOPAGO_ACCESS_TOKEN`/`MERCADOPAGO_WEBHOOK_SECRET` somente fora de `APP_ENV=production`, facilitando migração.
-- Em produção, ausência de secret tenant-scoped falha explicitamente.
-- Provider Mercado Pago recebe credenciais por instância, mantendo secrets fora do domínio.
-- Teste unitário do bloqueio CSRF.
+- Logout e mutations financeiras/admin do Dashboard exigem CSRF.
+- `TenantSecretResolver` cria namespace de segredo por tenant para Mercado Pago.
+- Em `APP_ENV=production`, o provider baseado apenas em ambiente é recusado.
+- Adapter HashiCorp Vault KV v2 disponível para secrets gerenciados.
+- `PaymentProviderFactory` cria Mercado Pago Pix com credenciais específicas do tenant.
+- Criação de pagamento usa o factory tenant-scoped.
+- Webhooks Mercado Pago identificam o PaymentIntent/tenant antes de validar a assinatura, evitando uma chave global compartilhada.
+- Webhooks desconhecidos são rejeitados em vez de processados com segredo global.
+- Testes verificam isolamento de namespace e bloqueio do provider de ambiente em produção.
+
+## Secret management
+
+Desenvolvimento/teste podem usar variáveis de ambiente. Produção deve usar um secret manager com least privilege, rotação, auditoria e revogação. Segredos não são persistidos no banco nem incluídos em artefatos de build.
 
 ## Segurança multi-tenant
 
-Todas as consultas administrativas existentes continuam usando `tenant_context`, que valida sessão, membership ativo e papel mínimo. A camada de credenciais agora também exige namespace por tenant em produção.
+Consultas administrativas usam `tenant_context`, validando sessão, membership ativo e papel mínimo. Credenciais PSP são resolvidas por `tenant_id`; um tenant sem seu próprio segredo não pode cair para a credencial de outro tenant em produção.
 
-O catálogo/checkout legado ainda usa `DEFAULT_TENANT_ID` e o endpoint administrativo de refund legado ainda existe. Esses pontos permanecem bloqueadores para declarar isolamento multi-tenant completo.
+## Limitações
 
-## Produção
-
-Esta fase não declara readiness. É necessário executar CI, testes E2E, validar todas as mutações administrativas com RBAC, migrar credenciais para Secret Manager real, validar cada webhook por tenant e remover/depreciar formalmente o admin key legado.
+O adapter Vault não configura sozinho a infraestrutura: políticas ACL, autenticação da workload, rotação e auditoria precisam ser configuradas no ambiente de produção. Ainda permanecem backup/restore, HTTPS/load balancer, execução real do sandbox PSP, cobertura completa de todas as mutations e remoção/depreciação formal do admin key legado.
