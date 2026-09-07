@@ -53,14 +53,12 @@ def configure_observability() -> None:
 
         if traces_endpoint:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
             traces.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint)))
         trace.set_tracer_provider(traces)
 
         readers = []
         if metrics_endpoint:
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
             readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=metrics_endpoint)))
         metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
 
@@ -72,8 +70,6 @@ def configure_observability() -> None:
 def _instrument_frameworks() -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        # FastAPIInstrumentor is activated lazily by sitecustomize before app import.
         FastAPIInstrumentor().instrument()
     except (ImportError, RuntimeError):
         pass
@@ -89,6 +85,3 @@ def _instrument_frameworks() -> None:
         HTTPXClientInstrumentor().instrument()
     except (ImportError, RuntimeError):
         pass
-
-
-configure_observability()
