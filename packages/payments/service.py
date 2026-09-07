@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.commerce.services import CommerceError, transition_order
 from packages.database.models import Order, PaymentIntentRecord
 from packages.payments.base import PaymentProvider
+from packages.payments.reliability import enqueue_outbox, next_reconcile_time
 
 
 async def create_payment_intent(
@@ -30,7 +32,7 @@ async def create_payment_intent(
         select(PaymentIntentRecord).where(
             PaymentIntentRecord.order_id == order_id,
             PaymentIntentRecord.provider == provider.name,
-        )
+        ).with_for_update()
     )
     if existing is not None:
         return existing
@@ -50,15 +52,25 @@ async def create_payment_intent(
         order_id=order.id,
         provider=provider.name,
         provider_payment_id=intent.provider_payment_id,
+        idempotency_key=idempotency_key,
         status=intent.status,
         amount_minor=intent.amount_minor,
         currency=intent.currency,
         checkout_url=intent.checkout_url,
         qr_code=intent.qr_code,
         qr_code_text=intent.qr_code_text,
+        next_reconcile_at=next_reconcile_time(intent.status),
     )
     session.add(record)
     await session.flush()
+    enqueue_outbox(
+        session,
+        tenant_id=tenant_id,
+        aggregate_type="payment",
+        aggregate_id=str(record.id),
+        event_type="payment.created",
+        payload={"order_id": str(order.id), "provider": provider.name},
+    )
     return record
 
 
@@ -72,4 +84,14 @@ async def mark_payment_paid(
     if payment.status == "approved":
         return
     payment.status = "approved"
+    payment.next_reconcile_at = None
+    payment.last_reconcile_error = None
     await transition_order(session, payment.order_id, tenant_id, "PAID")
+    enqueue_outbox(
+        session,
+        tenant_id=tenant_id,
+        aggregate_type="payment",
+        aggregate_id=str(payment.id),
+        event_type="payment.paid",
+        payload={"order_id": str(payment.order_id), "provider": payment.provider},
+    )
