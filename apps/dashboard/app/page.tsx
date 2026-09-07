@@ -7,6 +7,10 @@ type Me = { username: string; global_name?: string | null; tenants: Tenant[] };
 type Overview = { role: string; orders: number; revenue_minor: number; active_products: number };
 type Order = { id: string; discord_user_id: number; status: string; currency: string; total_minor: number; created_at: string };
 
+function csrfToken(): string {
+  return document.cookie.split('; ').find((value) => value.startsWith('commerce_csrf='))?.split('=')[1] ?? '';
+}
+
 async function api<T>(path: string): Promise<T> {
   const response = await fetch(path, { credentials: 'include', cache: 'no-store' });
   if (!response.ok) throw new Error(`${response.status}`);
@@ -57,6 +61,13 @@ export default function Dashboard() {
     );
   }
 
+  const logout = async () => {
+    await fetch('/api/v1/auth/discord/logout', {
+      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrfToken() },
+    });
+    location.reload();
+  };
+
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -72,7 +83,7 @@ export default function Dashboard() {
           <div><span className="eyebrow">DASHBOARD</span><h1>{tenant?.name || 'Selecione uma loja'}</h1></div>
           <div className="toolbar">
             <select value={tenantId} onChange={(event) => setTenantId(event.target.value)}>{me.tenants.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select>
-            <button className="button" onClick={() => fetch('/api/v1/auth/discord/logout', { method: 'POST', credentials: 'include' }).then(() => location.reload())}>Sair</button>
+            <button className="button" onClick={logout}>Sair</button>
           </div>
         </header>
         {error && <div className="alert">{error}</div>}
