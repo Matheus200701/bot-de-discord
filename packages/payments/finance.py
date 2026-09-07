@@ -10,13 +10,10 @@ from packages.database.models import (
     LedgerEntry,
     LedgerTransaction,
     Order,
+    OutboxEvent,
     PaymentIntentRecord,
     RefundRecord,
 )
-from packages.payments.reliability import enqueue_outbox
-
-
-TERMINAL_REFUND_STATUSES = frozenset({"APPROVED", "FAILED", "CANCELLED"})
 
 
 async def request_refund(
@@ -59,6 +56,14 @@ async def request_refund(
     if int(refunded or 0) + amount_minor > payment.amount_minor:
         raise CommerceError("refund_exceeds_paid_amount")
 
+    order = await session.scalar(
+        select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id).with_for_update()
+    )
+    if order is None:
+        raise CommerceError("order_not_found")
+    if order.status not in {"PAID", "FULFILLING", "FULFILLED", "REFUND_FAILED", "REFUND_PENDING"}:
+        raise CommerceError("order_not_refundable")
+
     refund = RefundRecord(
         tenant_id=tenant_id,
         order_id=order_id,
@@ -72,17 +77,15 @@ async def request_refund(
     )
     session.add(refund)
     await session.flush()
-    if (await session.scalar(select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id))) is None:
-        raise CommerceError("order_not_found")
-    await transition_order(session, order_id, tenant_id, "REFUND_PENDING")
-    enqueue_outbox(
-        session,
+    if order.status != "REFUND_PENDING":
+        await transition_order(session, order_id, tenant_id, "REFUND_PENDING")
+    session.add(OutboxEvent(
         tenant_id=tenant_id,
         aggregate_type="refund",
         aggregate_id=str(refund.id),
         event_type="refund.execute",
         payload={"refund_id": str(refund.id)},
-    )
+    ))
     return refund
 
 
