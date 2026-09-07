@@ -33,13 +33,9 @@ Foi adicionado o primeiro adapter PSP real: **Mercado Pago Pix**.
 - persistência de `PaymentIntentRecord`
 - webhook dedicado `/webhooks/payments/mercadopago_pix`
 - validação HMAC de `x-signature`
-- validação usando `x-request-id` + `data.id`
-- `PaymentEvent` idempotente antes dos efeitos de negócio
 - confirmação server-to-server do pagamento
 - conferência de valor e moeda
 - transições `PAYMENT_PENDING -> PAID/CANCELLED/EXPIRED`
-
-As credenciais ficam fora do código e devem ser fornecidas por secret manager/ambiente. Stripe permanece apenas como contrato/estrutura até sua implementação ser validada contra a documentação atual do provedor.
 
 ## Fase 6 — reliability / event bus
 
@@ -47,46 +43,38 @@ A camada de pagamentos agora possui mecanismos para recuperação de falhas sem 
 
 - outbox transacional em PostgreSQL (`outbox_events`);
 - processamento assíncrono com `FOR UPDATE SKIP LOCKED`;
-- retries com exponential backoff + jitter e limite de tentativas;
-- eventos que excedem o limite entram em `DEAD` (DLQ lógica) para investigação/reprocessamento futuro;
-- circuit breaker por PSP para evitar cascata de chamadas quando o provedor está indisponível;
+- retries com exponential backoff + jitter;
+- DLQ lógica via estado `DEAD`;
+- circuit breaker por PSP;
 - timeout nas consultas de reconciliação;
 - reconciliação periódica de `PaymentIntentRecord` pendentes;
-- validação de valor/moeda antes de qualquer transição financeira;
 - recuperação de locks antigos do outbox;
-- eventos de criação, mudança de status e pagamento confirmado publicados na mesma transação da alteração financeira;
 - idempotência adicional por `(tenant_id, order_id, provider)` e `(provider, idempotency_key)`.
 
-O worker fica separado do processo HTTP e é iniciado pelo Docker Compose com `python -m apps.worker.main`.
+## Fase 7 — refunds / disputes / ledger
+
+A contabilidade financeira deixa de depender apenas dos estados do pedido e passa a ter um ledger de partidas dobradas:
+
+- `ledger_transactions` + `ledger_entries` com débito/crédito em unidades menores inteiras;
+- constraint de idempotência por transação financeira;
+- lançamento de venda aprovado: `cash:<provider>` → `revenue:sales`;
+- lançamento de reembolso aprovado: `refunds:customer` → `cash:<provider>`;
+- lançamento de perda por chargeback: `chargebacks:loss` → `cash:<provider>`;
+- refunds parciais ou totais com idempotência por tenant + chave da operação;
+- execução do refund pelo worker através do outbox;
+- falhas permanentes de refund entram em `FAILED` e no DLQ do outbox;
+- endpoint administrativo protegido por `X-Commerce-Admin-Key` para solicitar refund;
+- webhook assinado para chargebacks do Mercado Pago em `/webhooks/payments/mercadopago_chargebacks`;
+- `DisputeRecord` persistido e reconciliável por `provider_dispute_id`;
+- resolução negativa de chargeback gera lançamento contábil idempotente.
+
+O Mercado Pago documenta refunds parciais/totais pelo endpoint `/v1/payments/{id}/refunds` e exige `X-Idempotency-Key`; chargebacks possuem notificações específicas e consulta em `/v1/chargebacks/{id}`. citeturn456701search1turn395899search6
 
 ## Discord 2026
 
 O projeto foi auditado contra a documentação oficial atual. Application Commands, user/guild installation, OAuth2, Components, Modals, Account Linking e monetização oficial são tratados segundo o suporte e as restrições documentadas. Veja `DISCORD_COMPATIBILITY.md`.
 
 A arquitetura não assume que Premium Apps seja um gateway universal para qualquer mercadoria: SKUs/assinaturas nativas do Discord ficam separados da camada externa de pagamentos e dependem de elegibilidade do Discord.
-
-## Desenvolvimento
-
-```bash
-cp .env.example .env
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-alembic upgrade head
-uvicorn apps.api.main:app --reload
-```
-
-Bot:
-
-```bash
-python -m apps.bot.main
-```
-
-Docker:
-
-```bash
-docker compose up --build
-```
 
 ## Endpoints atuais
 
@@ -95,24 +83,25 @@ docker compose up --build
 - `GET /api/v1/products`
 - `POST /api/v1/products`
 - `GET /api/v1/products/{product_id}`
-- `POST /api/v1/cart/items` com `X-Discord-User-ID`
-- `POST /api/v1/checkout` com `X-Discord-User-ID` e `idempotency_key`
-- `POST /api/v1/payments/mercadopago/pix` com `X-Discord-User-ID`
+- `POST /api/v1/cart/items`
+- `POST /api/v1/checkout`
+- `POST /api/v1/payments/mercadopago/pix`
+- `POST /api/v1/orders/{order_id}/refund` (admin)
 - `POST /webhooks/payments/mercadopago_pix`
+- `POST /webhooks/payments/mercadopago_chargebacks`
 
 ## Regras financeiras
 
-Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação recalcula o checkout no servidor. Eventos de pagamento devem ser persistidos antes de executar efeitos. A reconciliação também confere valor e moeda contra o `PaymentIntentRecord` persistido.
+Valores monetários usam unidades menores inteiras (`minor`) no domínio persistente. O cliente nunca define o preço final. Eventos externos são idempotentes e alterações financeiras relevantes precisam permanecer recuperáveis por outbox/reconciliação. O ledger só aceita lançamentos com exatamente um lado de débito e um lado de crédito.
 
 ## Produção
 
-Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secrets manager, domínio HTTPS, OAuth2 redirect URI, Discord Application ID/public key/token, credenciais PSP e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
+Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secret manager, HTTPS, OAuth2 redirect URI, Discord credentials, credenciais PSP, `COMMERCE_ADMIN_KEY` forte e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
 
 ## Próximas fases
 
-1. Refund workflow, disputas/chargebacks e ledger financeiro.
-2. Entrega digital e Discord Roles.
-3. Cupons, cashback, afiliados e VIP.
-4. Dashboard Next.js/TypeScript + OAuth2/account linking.
-5. OpenTelemetry, métricas, Sentry e alertas.
-6. Hardening, testes de concorrência E2E e deploy de produção.
+1. Entrega digital e Discord Roles.
+2. Cupons, cashback, afiliados e VIP.
+3. Dashboard Next.js/TypeScript + OAuth2/account linking.
+4. OpenTelemetry, métricas, Sentry e alertas.
+5. Hardening, testes de concorrência E2E e deploy de produção.
