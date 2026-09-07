@@ -1,22 +1,19 @@
 """add cart, order items, and inventory reservations
 
 Revision ID: 0002_cart_checkout
-Revises: None
+Revises: 0001_core
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0002_cart_checkout"
-down_revision = None
+down_revision = "0001_core"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-
     op.create_table(
         "carts",
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), primary_key=True),
