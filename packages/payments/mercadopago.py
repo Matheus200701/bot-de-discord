@@ -79,15 +79,31 @@ class MercadoPagoPixProvider(PaymentProvider):
     async def cancel_payment(self, provider_payment_id: str) -> None:
         await self._request("PUT", f"/v1/payments/{provider_payment_id}", json={"status": "cancelled"})
 
-    async def refund_payment(self, provider_payment_id: str, amount_minor: int | None = None) -> None:
+    async def refund_payment(
+        self,
+        provider_payment_id: str,
+        amount_minor: int | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> str | None:
+        key = idempotency_key or provider_payment_id
         payload = {} if amount_minor is None else {"amount": float(Decimal(amount_minor) / Decimal(100))}
-        await self._request("POST", f"/v1/payments/{provider_payment_id}/refunds", json=payload)
+        data = await self._request(
+            "POST",
+            f"/v1/payments/{provider_payment_id}/refunds",
+            json=payload,
+            headers={"X-Idempotency-Key": key},
+        )
+        return str(data["id"]) if data.get("id") is not None else None
+
+    async def get_chargeback(self, chargeback_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/chargebacks/{chargeback_id}")
 
     async def validate_webhook(self, headers: dict[str, str], raw_body: bytes) -> bool:
         signature = headers.get("x-signature", "")
         request_id = headers.get("x-request-id", "")
         data_id = headers.get("x-data-id", "")
-        values = dict(item.split("=", 1) for item in signature.split(",") if "=" in item)
+        values = dict(item.strip().split("=", 1) for item in signature.split(",") if "=" in item)
         ts, provided = values.get("ts"), values.get("v1")
         if not ts or not provided or not request_id or not data_id:
             return False
