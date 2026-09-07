@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
-import secrets
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,15 +41,18 @@ class ProductOut(ProductIn):
     active: bool
 
 class CartItemIn(BaseModel):
+    tenant_id: UUID
     product_id: UUID
     quantity: int = Field(gt=0, le=10000)
 
 class CheckoutIn(BaseModel):
+    tenant_id: UUID
     idempotency_key: str = Field(min_length=8, max_length=128)
     coupon_code: str | None = Field(default=None, min_length=2, max_length=64)
     affiliate_code: str | None = Field(default=None, min_length=2, max_length=64)
 
 class PaymentIn(BaseModel):
+    tenant_id: UUID
     order_id: UUID
     payer_email: str = Field(min_length=5, max_length=320)
     idempotency_key: str = Field(min_length=8, max_length=128)
@@ -74,17 +75,17 @@ async def ready(session: AsyncSession = Depends(db_session)) -> dict[str, str]:
     return {"status": "ready"}
 
 @app.get("/api/v1/products", response_model=list[ProductOut])
-async def products(session: AsyncSession = Depends(db_session)) -> list[Product]:
+async def products(tenant_id: UUID = Query(...), session: AsyncSession = Depends(db_session)) -> list[Product]:
     try:
-        result = await session.scalars(select(Product).where(Product.active.is_(True)).order_by(Product.created_at.desc()))
+        result = await session.scalars(select(Product).where(Product.tenant_id == tenant_id, Product.active.is_(True)).order_by(Product.created_at.desc()))
         return list(result.all())
     finally:
         await session.close()
 
 @app.get("/api/v1/products/{product_id}", response_model=ProductOut)
-async def get_product(product_id: UUID, session: AsyncSession = Depends(db_session)) -> Product:
+async def get_product(product_id: UUID, tenant_id: UUID = Query(...), session: AsyncSession = Depends(db_session)) -> Product:
     try:
-        product = await session.scalar(select(Product).where(Product.id == product_id, Product.active.is_(True)))
+        product = await session.scalar(select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id, Product.active.is_(True)))
         if product is None:
             raise HTTPException(404, "product_not_found")
         return product
@@ -94,12 +95,11 @@ async def get_product(product_id: UUID, session: AsyncSession = Depends(db_sessi
 @app.post("/api/v1/cart/items", status_code=204)
 async def cart_add(data: CartItemIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> None:
     try:
-        tenant_id = data.product_id
         async with session.begin():
-            product = await session.scalar(select(Product).where(Product.id == tenant_id, Product.active.is_(True)))
+            product = await session.scalar(select(Product).where(Product.id == data.product_id, Product.tenant_id == data.tenant_id, Product.active.is_(True)))
             if product is None:
                 raise HTTPException(404, "product_not_found")
-            await add_to_cart(session, product.tenant_id, x_discord_user_id, data.product_id, data.quantity)
+            await add_to_cart(session, data.tenant_id, x_discord_user_id, data.product_id, data.quantity)
     except CommerceError as exc:
         await session.rollback()
         raise HTTPException(400, str(exc)) from exc
@@ -107,10 +107,10 @@ async def cart_add(data: CartItemIn, x_discord_user_id: int = Header(..., alias=
         await session.close()
 
 @app.post("/api/v1/checkout", status_code=201)
-async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), tenant_id: UUID, session: AsyncSession = Depends(db_session)) -> dict[str, object]:
+async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     try:
         async with session.begin():
-            order = await create_order_from_cart(session, tenant_id, x_discord_user_id, data.idempotency_key, data.coupon_code, data.affiliate_code)
+            order = await create_order_from_cart(session, data.tenant_id, x_discord_user_id, data.idempotency_key, data.coupon_code, data.affiliate_code)
             return {"id": str(order.id), "status": order.status, "currency": order.currency, "total_minor": order.total_minor}
     except OutOfStock as exc:
         await session.rollback()
@@ -122,14 +122,14 @@ async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias=
         await session.close()
 
 @app.post("/api/v1/payments/mercadopago/pix", status_code=201)
-async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), tenant_id: UUID, session: AsyncSession = Depends(db_session)) -> dict[str, object]:
+async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     try:
         async with session.begin():
-            order = await session.scalar(select(Order).where(Order.id == data.order_id, Order.tenant_id == tenant_id, Order.discord_user_id == x_discord_user_id))
+            order = await session.scalar(select(Order).where(Order.id == data.order_id, Order.tenant_id == data.tenant_id, Order.discord_user_id == x_discord_user_id))
             if order is None:
                 raise HTTPException(404, "order_not_found")
-            provider = MercadoPagoPixProvider(access_token=secret_resolver.mercadopago_access_token(tenant_id), webhook_secret=secret_resolver.mercadopago_webhook_secret(tenant_id))
-            record = await create_payment_intent(session, provider, tenant_id, data.order_id, data.payer_email, data.idempotency_key)
+            provider = MercadoPagoPixProvider(access_token=secret_resolver.mercadopago_access_token(data.tenant_id), webhook_secret=secret_resolver.mercadopago_webhook_secret(data.tenant_id))
+            record = await create_payment_intent(session, provider, data.tenant_id, data.order_id, data.payer_email, data.idempotency_key)
             return {"id": str(record.id), "provider": record.provider, "provider_payment_id": record.provider_payment_id, "status": record.status, "amount_minor": record.amount_minor, "currency": record.currency, "checkout_url": record.checkout_url, "qr_code": record.qr_code, "qr_code_text": record.qr_code_text}
     except MercadoPagoError as exc:
         await session.rollback()
@@ -141,7 +141,7 @@ async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..
         await session.close()
 
 @app.get("/api/v1/orders/{order_id}/deliveries")
-async def order_deliveries(order_id: UUID, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), tenant_id: UUID, session: AsyncSession = Depends(db_session)) -> list[dict[str, object | None]]:
+async def order_deliveries(order_id: UUID, tenant_id: UUID = Query(...), x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> list[dict[str, object | None]]:
     try:
         order = await session.scalar(select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id, Order.discord_user_id == x_discord_user_id))
         if order is None:
