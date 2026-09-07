@@ -1,10 +1,10 @@
 # Discord Commerce Platform 2026
 
-Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + observabilidade, em vez de um bot monolítico.
+Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + observabilidade, em vez de um bot monolítico.
 
 ## Arquitetura
 
-Discord App → Discord Layer → Service Layer → Commerce / Payments / Inventory / Support / Customers → Event System → PostgreSQL + Redis → External APIs.
+Discord App → Discord Layer → Service Layer → Commerce / Payments / Inventory / Fulfillment / Support / Customers → Event System → PostgreSQL + Redis → External APIs.
 
 ## Stack
 
@@ -17,64 +17,44 @@ Discord App → Discord Layer → Service Layer → Commerce / Payments / Invent
 - httpx
 - Docker + GitHub Actions
 
-## Fase 2/3
+## Fase 8 — entrega digital e Discord Roles
 
-A persistência de produtos saiu do armazenamento em memória e passou para PostgreSQL. O domínio possui `Cart`, `CartItem`, `OrderItem` e `InventoryReservation`, com migrations Alembic. O checkout recalcula os preços no servidor, bloqueia linhas de produto dentro da transação, reserva estoque e transforma o carrinho em pedido de forma atômica.
+A confirmação do pagamento agora dispara fulfillment assíncrono através do outbox. O produto declara seu tipo de entrega em `metadata_json.delivery`.
 
-Reservas possuem expiração/release por worker, reduzindo o risco de estoque ficar preso quando um pagamento não é concluído.
+Exemplo de cargo Discord:
 
-## Fase 5 — pagamentos
+```json
+{
+  "delivery": {
+    "type": "discord_role",
+    "guild_id": "123456789012345678",
+    "role_id": "234567890123456789"
+  }
+}
+```
 
-Foi adicionado o primeiro adapter PSP real: **Mercado Pago Pix**.
+Exemplo de link digital externo:
 
-- `POST /api/v1/payments/mercadopago/pix`
-- API oficial de pagamentos `/v1/payments`
-- `X-Idempotency-Key` no request ao PSP
-- persistência de `PaymentIntentRecord`
-- webhook dedicado `/webhooks/payments/mercadopago_pix`
-- validação HMAC de `x-signature`
-- confirmação server-to-server do pagamento
-- conferência de valor e moeda
-- transições `PAYMENT_PENDING -> PAID/CANCELLED/EXPIRED`
+```json
+{
+  "delivery": {
+    "type": "digital_link",
+    "url": "https://storage.example.invalid/object"
+  }
+}
+```
 
-## Fase 6 — reliability / event bus
+O conteúdo privado não é armazenado no banco como texto bruto; a plataforma guarda somente a referência de entrega. O endpoint `GET /api/v1/orders/{order_id}/deliveries` permite ao comprador consultar suas entregas, e links digitais só são expostos quando o fulfillment está `DELIVERED`.
 
-A camada de pagamentos agora possui mecanismos para recuperação de falhas sem depender exclusivamente de webhooks:
+Entregas possuem estados persistentes (`PENDING`, `PROCESSING`, `DELIVERED`, `FAILED`, `REVOKED`) e são idempotentes por pedido/produto/tipo. Refund total agenda revogação de cargos entregues. Uma proteção de corrida impede que uma entrega pendente seja executada depois que o pedido foi revertido/refundado.
 
-- outbox transacional em PostgreSQL (`outbox_events`);
-- processamento assíncrono com `FOR UPDATE SKIP LOCKED`;
-- retries com exponential backoff + jitter;
-- DLQ lógica via estado `DEAD`;
-- circuit breaker por PSP;
-- timeout nas consultas de reconciliação;
-- reconciliação periódica de `PaymentIntentRecord` pendentes;
-- recuperação de locks antigos do outbox;
-- idempotência adicional por `(tenant_id, order_id, provider)` e `(provider, idempotency_key)`.
+### Discord Role Delivery
 
-## Fase 7 — refunds / disputes / ledger
+A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; o bot também não deve tentar operar sobre cargos gerenciados, e a própria API aplica as restrições de hierarquia de cargos. O worker faz retry via outbox quando o Discord está temporariamente indisponível.
 
-A contabilidade financeira deixa de depender apenas dos estados do pedido e passa a ter um ledger de partidas dobradas:
+## Fases 2–7
 
-- `ledger_transactions` + `ledger_entries` com débito/crédito em unidades menores inteiras;
-- constraint de idempotência por transação financeira;
-- lançamento de venda aprovado: `cash:<provider>` → `revenue:sales`;
-- lançamento de reembolso aprovado: `refunds:customer` → `cash:<provider>`;
-- lançamento de perda por chargeback: `chargebacks:loss` → `cash:<provider>`;
-- refunds parciais ou totais com idempotência por tenant + chave da operação;
-- execução do refund pelo worker através do outbox;
-- falhas permanentes de refund entram em `FAILED` e no DLQ do outbox;
-- endpoint administrativo protegido por `X-Commerce-Admin-Key` para solicitar refund;
-- webhook assinado para chargebacks do Mercado Pago em `/webhooks/payments/mercadopago_chargebacks`;
-- `DisputeRecord` persistido e reconciliável por `provider_dispute_id`;
-- resolução negativa de chargeback gera lançamento contábil idempotente.
-
-A integração usa os endpoints oficiais do Mercado Pago para refunds e chargebacks; a documentação do provedor exige `X-Idempotency-Key` para criação de refund e define notificações específicas para chargebacks.
-
-## Discord 2026
-
-O projeto foi auditado contra a documentação oficial atual. Application Commands, user/guild installation, OAuth2, Components, Modals, Account Linking e monetização oficial são tratados segundo o suporte e as restrições documentadas. Veja `DISCORD_COMPATIBILITY.md`.
-
-A arquitetura não assume que Premium Apps seja um gateway universal para qualquer mercadoria: SKUs/assinaturas nativas do Discord ficam separados da camada externa de pagamentos e dependem de elegibilidade do Discord.
+A base anterior já inclui checkout transacional, reservas de estoque com expiração, Mercado Pago Pix, webhooks assinados, reconciliação, outbox, retries/circuit breaker, refunds, disputes/chargebacks e ledger de partidas dobradas.
 
 ## Endpoints atuais
 
@@ -86,22 +66,22 @@ A arquitetura não assume que Premium Apps seja um gateway universal para qualqu
 - `POST /api/v1/cart/items`
 - `POST /api/v1/checkout`
 - `POST /api/v1/payments/mercadopago/pix`
+- `GET /api/v1/orders/{order_id}/deliveries`
 - `POST /api/v1/orders/{order_id}/refund` (admin)
 - `POST /webhooks/payments/mercadopago_pix`
 - `POST /webhooks/payments/mercadopago_chargebacks`
 
-## Regras financeiras
+## Segurança de entrega
 
-Valores monetários usam unidades menores inteiras (`minor`) no domínio persistente. O cliente nunca define o preço final. Eventos externos são idempotentes e alterações financeiras relevantes precisam permanecer recuperáveis por outbox/reconciliação. O ledger só aceita lançamentos com exatamente um lado de débito e um lado de crédito.
+O fulfillment nunca deve liberar acesso somente porque o pedido foi criado. O gatilho é um estado de pagamento confirmado. Toda mutação externa ocorre no worker e pode ser repetida com segurança. Falhas permanentes são marcadas e permanecem recuperáveis pelo outbox/DLQ.
 
 ## Produção
 
-Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secret manager, HTTPS, OAuth2 redirect URI, Discord credentials, credenciais PSP, `COMMERCE_ADMIN_KEY` forte e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
+Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secret manager, HTTPS, OAuth2 redirect URI, Discord credentials, credenciais PSP, `COMMERCE_ADMIN_KEY` forte, permissões mínimas do bot e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
 
 ## Próximas fases
 
-1. Entrega digital e Discord Roles.
-2. Cupons, cashback, afiliados e VIP.
-3. Dashboard Next.js/TypeScript + OAuth2/account linking.
-4. OpenTelemetry, métricas, Sentry e alertas.
-5. Hardening, testes de concorrência E2E e deploy de produção.
+1. Cupons, cashback, afiliados e VIP.
+2. Dashboard Next.js/TypeScript + OAuth2/account linking.
+3. OpenTelemetry, métricas, Sentry e alertas.
+4. Hardening, testes de concorrência E2E, sandbox e deploy de produção.
