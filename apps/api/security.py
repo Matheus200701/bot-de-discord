@@ -11,9 +11,10 @@ class RequestTooLarge(Exception):
 
 
 class SecurityMiddleware:
-    """ASGI hardening layer with request-size, host and HTTP-method controls."""
+    """ASGI hardening layer with request-size, host, method and CSRF controls."""
 
     ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+    UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -39,6 +40,20 @@ class SecurityMiddleware:
         if self.trusted_hosts and host not in self.trusted_hosts:
             await self._simple_response(send, 400, b"invalid_host")
             return
+
+        if method in self.UNSAFE_METHODS:
+            cookie_header = headers.get(b"cookie", b"").decode("latin-1")
+            if "commerce_session=" in cookie_header:
+                cookies = {
+                    item.split("=", 1)[0].strip(): item.split("=", 1)[1].strip()
+                    for item in cookie_header.split(";")
+                    if "=" in item
+                }
+                csrf_cookie = cookies.get("commerce_csrf", "")
+                csrf_header = headers.get(b"x-csrf-token", b"").decode("latin-1")
+                if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+                    await self._simple_response(send, 403, b"csrf_failed")
+                    return
 
         content_length = headers.get(b"content-length")
         if content_length:
