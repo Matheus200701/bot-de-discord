@@ -21,7 +21,7 @@ from packages.payments.finance import request_refund
 from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.9.0")
+app = FastAPI(title="Discord Commerce API", version="0.14.0")
 app.add_middleware(SecurityMiddleware)
 app.include_router(webhook_router)
 app.include_router(promotions_router)
