@@ -41,6 +41,24 @@ Foi adicionado o primeiro adapter PSP real: **Mercado Pago Pix**.
 
 As credenciais ficam fora do código e devem ser fornecidas por secret manager/ambiente. Stripe permanece apenas como contrato/estrutura até sua implementação ser validada contra a documentação atual do provedor.
 
+## Fase 6 — reliability / event bus
+
+A camada de pagamentos agora possui mecanismos para recuperação de falhas sem depender exclusivamente de webhooks:
+
+- outbox transacional em PostgreSQL (`outbox_events`);
+- processamento assíncrono com `FOR UPDATE SKIP LOCKED`;
+- retries com exponential backoff + jitter e limite de tentativas;
+- eventos que excedem o limite entram em `DEAD` (DLQ lógica) para investigação/reprocessamento futuro;
+- circuit breaker por PSP para evitar cascata de chamadas quando o provedor está indisponível;
+- timeout nas consultas de reconciliação;
+- reconciliação periódica de `PaymentIntentRecord` pendentes;
+- validação de valor/moeda antes de qualquer transição financeira;
+- recuperação de locks antigos do outbox;
+- eventos de criação, mudança de status e pagamento confirmado publicados na mesma transação da alteração financeira;
+- idempotência adicional por `(tenant_id, order_id, provider)` e `(provider, idempotency_key)`.
+
+O worker fica separado do processo HTTP e é iniciado pelo Docker Compose com `python -m apps.worker.main`.
+
 ## Discord 2026
 
 O projeto foi auditado contra a documentação oficial atual. Application Commands, user/guild installation, OAuth2, Components, Modals, Account Linking e monetização oficial são tratados segundo o suporte e as restrições documentadas. Veja `DISCORD_COMPATIBILITY.md`.
@@ -84,7 +102,7 @@ docker compose up --build
 
 ## Regras financeiras
 
-Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação recalcula o checkout no servidor. Eventos de pagamento devem ser persistidos com `provider_event_id` único antes de executar efeitos.
+Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação recalcula o checkout no servidor. Eventos de pagamento devem ser persistidos antes de executar efeitos. A reconciliação também confere valor e moeda contra o `PaymentIntentRecord` persistido.
 
 ## Produção
 
@@ -92,11 +110,9 @@ Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, sec
 
 ## Próximas fases
 
-1. Reconciliação periódica de pagamentos + retries/backoff/circuit breaker.
-2. Outbox/event bus e processamento assíncrono confiável.
-3. Refund workflow e disputas/chargebacks.
-4. Entrega digital e Discord Roles.
-5. Cupons, cashback, afiliados e VIP.
-6. Dashboard Next.js/TypeScript + OAuth2/account linking.
-7. OpenTelemetry, métricas, Sentry e alertas.
-8. Hardening, testes de concorrência E2E e deploy de produção.
+1. Refund workflow, disputas/chargebacks e ledger financeiro.
+2. Entrega digital e Discord Roles.
+3. Cupons, cashback, afiliados e VIP.
+4. Dashboard Next.js/TypeScript + OAuth2/account linking.
+5. OpenTelemetry, métricas, Sentry e alertas.
+6. Hardening, testes de concorrência E2E e deploy de produção.
