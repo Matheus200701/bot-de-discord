@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.database.models import DashboardSession, DashboardUser, OAuthState, Tenant, TenantMembership
+from packages.auth.models import DashboardSession, DashboardUser, OAuthState, Tenant, TenantMembership
 
 DISCORD_API = os.getenv("DISCORD_API_BASE_URL", "https://discord.com/api/v10")
 SCOPES = "identify guilds"
@@ -28,14 +28,7 @@ def _now() -> datetime:
 
 
 def oauth_authorize_url(state: str) -> str:
-    params = {
-        "response_type": "code",
-        "client_id": os.environ["DISCORD_APPLICATION_ID"],
-        "scope": SCOPES,
-        "state": state,
-        "redirect_uri": os.environ["OAUTH_REDIRECT_URI"],
-        "prompt": "consent",
-    }
+    params = {"response_type": "code", "client_id": os.environ["DISCORD_APPLICATION_ID"], "scope": SCOPES, "state": state, "redirect_uri": os.environ["OAUTH_REDIRECT_URI"], "prompt": "consent"}
     return f"https://discord.com/oauth2/authorize?{urlencode(params)}"
 
 
@@ -47,11 +40,7 @@ async def begin_oauth(session: AsyncSession) -> str:
 
 
 async def exchange_code(code: str) -> dict:
-    data = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": os.environ["OAUTH_REDIRECT_URI"],
-    }
+    data = {"grant_type": "authorization_code", "code": code, "redirect_uri": os.environ["OAUTH_REDIRECT_URI"]}
     auth = (os.environ["DISCORD_APPLICATION_ID"], os.environ["OAUTH_CLIENT_SECRET"])
     async with httpx.AsyncClient(base_url=DISCORD_API, timeout=15.0) as client:
         response = await client.post("/oauth2/token", data=data, auth=auth)
@@ -88,7 +77,6 @@ async def upsert_identity(session: AsyncSession, user_data: dict, guilds: list[d
         user.username = str(user_data.get("username", user.username))
         user.global_name = user_data.get("global_name")
         user.avatar_hash = user_data.get("avatar")
-
     for guild in guilds:
         permissions = int(guild.get("permissions", 0))
         if guild.get("owner") is not True and not (permissions & MANAGE_GUILD):
