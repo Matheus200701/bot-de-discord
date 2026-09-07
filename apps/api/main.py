@@ -20,14 +20,16 @@ from packages.database.session import SessionFactory
 from packages.payments.finance import request_refund
 from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
+from packages.security.secrets import TenantSecretResolver
 
-app = FastAPI(title="Discord Commerce API", version="0.14.0")
+app = FastAPI(title="Discord Commerce API", version="0.16.0")
 app.add_middleware(SecurityMiddleware)
 app.include_router(webhook_router)
 app.include_router(promotions_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 DEFAULT_TENANT_ID = UUID(os.getenv("DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"))
+secret_resolver = TenantSecretResolver()
 
 
 class ProductIn(BaseModel):
@@ -158,7 +160,10 @@ async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..
             order = await session.scalar(select(Order).where(Order.id == data.order_id, Order.tenant_id == DEFAULT_TENANT_ID, Order.discord_user_id == x_discord_user_id))
             if order is None:
                 raise HTTPException(404, "order_not_found")
-            record = await create_payment_intent(session, MercadoPagoPixProvider(), DEFAULT_TENANT_ID, data.order_id, data.payer_email, data.idempotency_key)
+            access_token = secret_resolver.mercadopago_access_token(DEFAULT_TENANT_ID)
+            webhook_secret = secret_resolver.mercadopago_webhook_secret(DEFAULT_TENANT_ID)
+            provider = MercadoPagoPixProvider(access_token=access_token, webhook_secret=webhook_secret)
+            record = await create_payment_intent(session, provider, DEFAULT_TENANT_ID, data.order_id, data.payer_email, data.idempotency_key)
             return {"id": str(record.id), "provider": record.provider, "provider_payment_id": record.provider_payment_id, "status": record.status, "amount_minor": record.amount_minor, "currency": record.currency, "checkout_url": record.checkout_url, "qr_code": record.qr_code, "qr_code_text": record.qr_code_text}
     except MercadoPagoError as exc:
         await session.rollback()
