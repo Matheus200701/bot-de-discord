@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import secrets
-from collections.abc import Awaitable, Callable
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+
+class RequestTooLarge(Exception):
+    """Raised internally when a streamed HTTP request exceeds the configured limit."""
 
 
 class SecurityMiddleware:
@@ -52,24 +55,23 @@ class SecurityMiddleware:
             request_id = secrets.token_hex(16)
 
         received = 0
-        exhausted = False
+        response_started = False
 
         async def limited_receive() -> Message:
-            nonlocal received, exhausted
+            nonlocal received
             message = await receive()
             if message["type"] != "http.request":
                 return message
             body = message.get("body", b"")
             received += len(body)
             if received > self.max_body_bytes:
-                exhausted = True
-                return {"type": "http.disconnect"}
-            if not message.get("more_body", False):
-                exhausted = True
+                raise RequestTooLarge
             return message
 
         async def send_with_security(message: Message) -> None:
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 response_headers = list(message.get("headers", []))
                 response_headers.extend(
                     [
@@ -88,12 +90,11 @@ class SecurityMiddleware:
                 message = {**message, "headers": response_headers}
             await send(message)
 
-        await self.app(scope, limited_receive, send_with_security)
-
-        if exhausted and received > self.max_body_bytes:
-            # The application may have already emitted a response after receiving the oversized
-            # chunk. The request is therefore terminated without attempting a second response.
-            return
+        try:
+            await self.app(scope, limited_receive, send_with_security)
+        except RequestTooLarge:
+            if not response_started:
+                await self._simple_response(send, 413, b"request_too_large")
 
     @staticmethod
     async def _simple_response(send: Send, status: int, body: bytes) -> None:
