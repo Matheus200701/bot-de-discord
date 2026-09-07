@@ -19,13 +19,14 @@ from packages.payments.factory import PaymentProviderFactory
 from packages.payments.mercadopago import MercadoPagoError
 from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.16.0")
+app = FastAPI(title="Discord Commerce API", version="0.17.0")
 app.add_middleware(SecurityMiddleware)
 app.include_router(webhook_router)
 app.include_router(promotions_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 payment_providers = PaymentProviderFactory()
+
 
 class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -36,14 +37,17 @@ class ProductIn(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
     metadata_json: dict = Field(default_factory=dict)
 
+
 class ProductOut(ProductIn):
     id: UUID
     active: bool
+
 
 class CartItemIn(BaseModel):
     tenant_id: UUID
     product_id: UUID
     quantity: int = Field(gt=0, le=10000)
+
 
 class CheckoutIn(BaseModel):
     tenant_id: UUID
@@ -51,18 +55,22 @@ class CheckoutIn(BaseModel):
     coupon_code: str | None = Field(default=None, min_length=2, max_length=64)
     affiliate_code: str | None = Field(default=None, min_length=2, max_length=64)
 
+
 class PaymentIn(BaseModel):
     tenant_id: UUID
     order_id: UUID
     payer_email: str = Field(min_length=5, max_length=320)
     idempotency_key: str = Field(min_length=8, max_length=128)
 
+
 async def db_session() -> AsyncSession:
     return SessionFactory()
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
 
 @app.get("/ready")
 async def ready(session: AsyncSession = Depends(db_session)) -> dict[str, str]:
@@ -74,6 +82,7 @@ async def ready(session: AsyncSession = Depends(db_session)) -> dict[str, str]:
     await session.close()
     return {"status": "ready"}
 
+
 @app.get("/api/v1/products", response_model=list[ProductOut])
 async def products(tenant_id: UUID = Query(...), session: AsyncSession = Depends(db_session)) -> list[Product]:
     try:
@@ -81,6 +90,7 @@ async def products(tenant_id: UUID = Query(...), session: AsyncSession = Depends
         return list(result.all())
     finally:
         await session.close()
+
 
 @app.get("/api/v1/products/{product_id}", response_model=ProductOut)
 async def get_product(product_id: UUID, tenant_id: UUID = Query(...), session: AsyncSession = Depends(db_session)) -> Product:
@@ -91,6 +101,7 @@ async def get_product(product_id: UUID, tenant_id: UUID = Query(...), session: A
         return product
     finally:
         await session.close()
+
 
 @app.post("/api/v1/cart/items", status_code=204)
 async def cart_add(data: CartItemIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> None:
@@ -106,6 +117,7 @@ async def cart_add(data: CartItemIn, x_discord_user_id: int = Header(..., alias=
     finally:
         await session.close()
 
+
 @app.post("/api/v1/checkout", status_code=201)
 async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     try:
@@ -120,6 +132,7 @@ async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias=
         raise HTTPException(400, str(exc)) from exc
     finally:
         await session.close()
+
 
 @app.post("/api/v1/payments/mercadopago/pix", status_code=201)
 async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
@@ -139,6 +152,7 @@ async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..
         raise HTTPException(400, str(exc)) from exc
     finally:
         await session.close()
+
 
 @app.get("/api/v1/orders/{order_id}/deliveries")
 async def order_deliveries(order_id: UUID, tenant_id: UUID = Query(...), x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> list[dict[str, object | None]]:
