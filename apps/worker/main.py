@@ -108,21 +108,19 @@ async def process_outbox(dispatcher: OutboxDispatcher) -> int:
                                         .with_for_update()
                                     )
                                     if order is not None and order.status == "REFUND_PENDING":
-                                        await transition_order(
-                                            session, refund.order_id, refund.tenant_id, "REFUND_FAILED"
-                                        )
-                    elif event.event_type == "fulfillment.execute" and event.attempts >= MAX_OUTBOX_ATTEMPTS:
-                        fulfillment_id = event.payload.get("fulfillment_id")
-                        if fulfillment_id:
-                            fulfillment = await session.scalar(
-                                select(FulfillmentRecord)
-                                .where(FulfillmentRecord.id == UUID(str(fulfillment_id)))
-                                .with_for_update()
-                            )
-                            if fulfillment is not None:
-                                fulfillment.status = "FAILED"
-                                fulfillment.attempts = event.attempts
-                                fulfillment.last_error = str(exc)[:4000]
+                                        await transition_order(session, refund.order_id, refund.tenant_id, "REFUND_FAILED")
+                        elif event.event_type == "fulfillment.execute":
+                            fulfillment_id = event.payload.get("fulfillment_id")
+                            if fulfillment_id:
+                                fulfillment = await session.scalar(
+                                    select(FulfillmentRecord)
+                                    .where(FulfillmentRecord.id == UUID(str(fulfillment_id)))
+                                    .with_for_update()
+                                )
+                                if fulfillment is not None:
+                                    fulfillment.status = "FAILED"
+                                    fulfillment.attempts = event.attempts
+                                    fulfillment.last_error = str(exc)[:4000]
                     else:
                         event.status = "PENDING"
                         event.next_attempt_at = datetime.now(timezone.utc) + timedelta(
@@ -156,93 +154,47 @@ async def reconcile_due_payments(provider: MercadoPagoPixProvider) -> int:
                 if payment_id is None:
                     return count
                 count += 1
-                LOGGER.info(
-                    "Reconciled payment %s status=%s",
-                    payment_id,
-                    await reconcile_payment(session, provider, payment_id),
-                )
+                LOGGER.info("Reconciled payment %s status=%s", payment_id, await reconcile_payment(session, provider, payment_id))
     return count
 
 
 async def execute_refund(session, event: OutboxEvent, provider: MercadoPagoPixProvider) -> None:
     refund_id = UUID(str(event.payload["refund_id"]))
-    refund = await session.scalar(
-        select(RefundRecord).where(RefundRecord.id == refund_id).with_for_update()
-    )
+    refund = await session.scalar(select(RefundRecord).where(RefundRecord.id == refund_id).with_for_update())
     if refund is None or refund.status == "APPROVED":
         return
-    payment = await session.scalar(
-        select(PaymentIntentRecord).where(PaymentIntentRecord.id == refund.payment_intent_id).with_for_update()
-    )
+    payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.id == refund.payment_intent_id).with_for_update())
     if payment is None:
         raise RuntimeError("refund_payment_not_found")
     refund.status = "PROCESSING"
-    provider_refund_id = await provider.refund_payment(
-        payment.provider_payment_id,
-        refund.amount_minor,
-        idempotency_key=refund.idempotency_key,
-    )
+    provider_refund_id = await provider.refund_payment(payment.provider_payment_id, refund.amount_minor, idempotency_key=refund.idempotency_key)
     refund.provider_refund_id = provider_refund_id
     refund.status = "APPROVED"
     refund.last_error = None
-    await post_ledger_transaction(
-        session,
-        tenant_id=refund.tenant_id,
-        idempotency_key=f"refund-approved:{refund.id}",
-        reference_type="refund",
-        reference_id=str(refund.id),
-        currency=refund.currency,
-        debit_account="refunds:customer",
-        credit_account=f"cash:{refund.provider}",
-        amount_minor=refund.amount_minor,
-    )
-    refunded_total = await session.scalar(
-        select(func.coalesce(func.sum(RefundRecord.amount_minor), 0)).where(
-            RefundRecord.payment_intent_id == payment.id,
-            RefundRecord.status == "APPROVED",
-        )
-    )
+    await post_ledger_transaction(session, tenant_id=refund.tenant_id, idempotency_key=f"refund-approved:{refund.id}", reference_type="refund", reference_id=str(refund.id), currency=refund.currency, debit_account="refunds:customer", credit_account=f"cash:{refund.provider}", amount_minor=refund.amount_minor)
+    refunded_total = await session.scalar(select(func.coalesce(func.sum(RefundRecord.amount_minor), 0)).where(RefundRecord.payment_intent_id == payment.id, RefundRecord.status == "APPROVED"))
     if int(refunded_total or 0) >= payment.amount_minor:
-        order = await session.scalar(
-            select(Order).where(Order.id == refund.order_id, Order.tenant_id == refund.tenant_id).with_for_update()
-        )
+        order = await session.scalar(select(Order).where(Order.id == refund.order_id, Order.tenant_id == refund.tenant_id).with_for_update())
         if order is not None and order.status in {"REFUND_PENDING", "FULFILLING", "FULFILLED"}:
             if order.status == "REFUND_PENDING":
                 await transition_order(session, refund.order_id, refund.tenant_id, "REFUNDED")
-            rows = await session.scalars(
-                select(FulfillmentRecord).where(
-                    FulfillmentRecord.order_id == refund.order_id,
-                    FulfillmentRecord.status == "DELIVERED",
-                )
-            )
-            for record in rows:
-                enqueue_outbox(
-                    session,
-                    tenant_id=refund.tenant_id,
-                    aggregate_type="fulfillment",
-                    aggregate_id=str(record.id),
-                    event_type="fulfillment.revoke",
-                    payload={"fulfillment_id": str(record.id)},
-                )
+            records = await session.scalars(select(FulfillmentRecord).where(FulfillmentRecord.order_id == refund.order_id, FulfillmentRecord.status == "DELIVERED"))
+            for record in records:
+                enqueue_outbox(session, tenant_id=refund.tenant_id, aggregate_type="fulfillment", aggregate_id=str(record.id), event_type="fulfillment.revoke", payload={"fulfillment_id": str(record.id)})
 
 
 async def execute_fulfillment(session, event: OutboxEvent, role_delivery: DiscordRoleDelivery) -> None:
     fulfillment_id = UUID(str(event.payload["fulfillment_id"]))
-    record = await session.scalar(
-        select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
-    )
+    record = await session.scalar(select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update())
     if record is None or record.status in {"DELIVERED", "REVOKED"}:
         return
-    order = await session.scalar(
-        select(Order).where(Order.id == record.order_id, Order.tenant_id == record.tenant_id).with_for_update()
-    )
+    order = await session.scalar(select(Order).where(Order.id == record.order_id, Order.tenant_id == record.tenant_id).with_for_update())
     if order is None or order.status in {"REFUND_PENDING", "REFUNDED", "CANCELLED", "EXPIRED"}:
         record.status = "REVOKED"
         record.revoked_at = datetime.now(timezone.utc)
         return
     if order.status not in {"PAID", "FULFILLING"}:
-        raise RuntimeError(f"order_not_ready_for_fulfillment:{order.status if order else 'missing'}")
-
+        raise RuntimeError(f"order_not_ready_for_fulfillment:{order.status}")
     record.status = "PROCESSING"
     if record.delivery_type == "digital_link":
         if not record.delivery_url:
@@ -260,9 +212,7 @@ async def execute_fulfillment(session, event: OutboxEvent, role_delivery: Discor
 
 async def execute_revoke(session, event: OutboxEvent, role_delivery: DiscordRoleDelivery) -> None:
     fulfillment_id = UUID(str(event.payload["fulfillment_id"]))
-    record = await session.scalar(
-        select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
-    )
+    record = await session.scalar(select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update())
     if record is None or record.status == "REVOKED":
         return
     if record.delivery_type == "discord_role" and record.discord_guild_id and record.discord_role_id:
@@ -279,6 +229,8 @@ async def main() -> None:
         LOGGER.info("Outbox event %s type=%s aggregate=%s", event.id, event.event_type, event.aggregate_id)
 
     async def fulfillment_prepare_handler(session, event: OutboxEvent) -> None:
+        if event.tenant_id is None:
+            raise RuntimeError("fulfillment_event_missing_tenant")
         await prepare_order_fulfillment(session, UUID(str(event.payload["order_id"])), UUID(str(event.tenant_id)))
 
     async def fulfillment_handler(session, event: OutboxEvent) -> None:
@@ -290,16 +242,7 @@ async def main() -> None:
     dispatcher.register("payment.created", log_event)
     dispatcher.register("payment.paid", fulfillment_prepare_handler)
     dispatcher.register("payment.status.approved", fulfillment_prepare_handler)
-    for event_type in (
-        "payment.status.action_required",
-        "payment.status.waiting_payment",
-        "payment.status.cancelled",
-        "payment.status.rejected",
-        "payment.status.expired",
-        "payment.reconciliation_dead_lettered",
-        "payment.unknown",
-        "dispute.updated",
-    ):
+    for event_type in ("payment.status.action_required", "payment.status.waiting_payment", "payment.status.cancelled", "payment.status.rejected", "payment.status.expired", "payment.reconciliation_dead_lettered", "payment.unknown", "dispute.updated"):
         dispatcher.register(event_type, log_event)
     dispatcher.register("refund.execute", lambda session, event: execute_refund(session, event, provider))
     dispatcher.register("fulfillment.execute", fulfillment_handler)
@@ -307,9 +250,7 @@ async def main() -> None:
 
     while True:
         try:
-            outbox_count, reconcile_count = await asyncio.gather(
-                process_outbox(dispatcher), reconcile_due_payments(provider)
-            )
+            outbox_count, reconcile_count = await asyncio.gather(process_outbox(dispatcher), reconcile_due_payments(provider))
             if outbox_count or reconcile_count:
                 LOGGER.info("worker cycle outbox=%s reconciled=%s", outbox_count, reconcile_count)
         except Exception:
