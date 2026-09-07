@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.commerce.services import CommerceError, InvalidOrderTransition, transition_order
+from packages.commerce.services import CommerceError, transition_order
 from packages.database.models import FulfillmentRecord, Order, OrderItem, Product
 from packages.payments.reliability import enqueue_outbox
 
@@ -48,6 +48,12 @@ async def prepare_order_fulfillment(session: AsyncSession, order_id: UUID, tenan
         )
         if existing is not None:
             continue
+        if delivery_type == "discord_role" and (
+            _int_or_none(delivery.get("guild_id")) is None or _int_or_none(delivery.get("role_id")) is None
+        ):
+            raise CommerceError("discord_role_delivery_configuration_invalid")
+        if delivery_type == "digital_link" and _string_or_none(delivery.get("url")) is None:
+            raise CommerceError("digital_link_delivery_configuration_invalid")
         record = FulfillmentRecord(
             tenant_id=tenant_id,
             order_id=order.id,
@@ -97,7 +103,9 @@ def _string_or_none(value: object) -> str | None:
 
 
 async def mark_fulfillment_delivered(session: AsyncSession, fulfillment_id: UUID) -> None:
-    record = await session.scalar(select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update())
+    record = await session.scalar(
+        select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
+    )
     if record is None:
         raise CommerceError("fulfillment_not_found")
     if record.status == "DELIVERED":
@@ -115,13 +123,17 @@ async def mark_fulfillment_delivered(session: AsyncSession, fulfillment_id: UUID
         .limit(1)
     )
     if pending is None:
-        order = await session.scalar(select(Order).where(Order.id == record.order_id, Order.tenant_id == record.tenant_id).with_for_update())
+        order = await session.scalar(
+            select(Order).where(Order.id == record.order_id, Order.tenant_id == record.tenant_id).with_for_update()
+        )
         if order is not None and order.status == "FULFILLING":
             await transition_order(session, order.id, record.tenant_id, "FULFILLED")
 
 
 async def mark_fulfillment_failed(session: AsyncSession, fulfillment_id: UUID, error: str) -> None:
-    record = await session.scalar(select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update())
+    record = await session.scalar(
+        select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
+    )
     if record is None:
         raise CommerceError("fulfillment_not_found")
     record.status = "FAILED"
@@ -130,7 +142,9 @@ async def mark_fulfillment_failed(session: AsyncSession, fulfillment_id: UUID, e
 
 
 async def revoke_fulfillment(session: AsyncSession, fulfillment_id: UUID) -> None:
-    record = await session.scalar(select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update())
+    record = await session.scalar(
+        select(FulfillmentRecord).where(FulfillmentRecord.id == fulfillment_id).with_for_update()
+    )
     if record is None:
         raise CommerceError("fulfillment_not_found")
     if record.status == "REVOKED":
