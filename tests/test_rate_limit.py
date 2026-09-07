@@ -18,7 +18,6 @@ class FakeRedis:
 @pytest.mark.asyncio
 async def test_rate_limiter_blocks_after_limit() -> None:
     limiter = RedisRateLimiter(FakeRedis(), limit=2, window_seconds=60)  # type: ignore[arg-type]
-
     assert await limiter.check("tenant:user") == 1
     assert await limiter.check("tenant:user") == 0
     with pytest.raises(RateLimitExceeded):
