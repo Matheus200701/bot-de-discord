@@ -68,7 +68,7 @@ A contabilidade financeira deixa de depender apenas dos estados do pedido e pass
 - `DisputeRecord` persistido e reconciliável por `provider_dispute_id`;
 - resolução negativa de chargeback gera lançamento contábil idempotente.
 
-O Mercado Pago documenta refunds parciais/totais pelo endpoint `/v1/payments/{id}/refunds` e exige `X-Idempotency-Key`; chargebacks possuem notificações específicas e consulta em `/v1/chargebacks/{id}`. citeturn456701search1turn395899search6
+A integração usa os endpoints oficiais do Mercado Pago para refunds e chargebacks; a documentação do provedor exige `X-Idempotency-Key` para criação de refund e define notificações específicas para chargebacks.
 
 ## Discord 2026
 
