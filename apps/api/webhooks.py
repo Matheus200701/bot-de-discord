@@ -11,6 +11,7 @@ from packages.commerce.services import CommerceError, transition_order
 from packages.database.models import Order, PaymentEvent, PaymentIntentRecord
 from packages.database.session import SessionFactory
 from packages.payments.mercadopago import MercadoPagoPixProvider
+from packages.payments.reliability import enqueue_outbox, next_reconcile_time
 
 router = APIRouter(prefix="/webhooks/payments", tags=["webhooks"])
 
@@ -29,11 +30,7 @@ async def mercado_pago_webhook(
         raise HTTPException(400, "missing_webhook_security_headers")
 
     provider = MercadoPagoPixProvider()
-    headers = {
-        "x-signature": x_signature,
-        "x-request-id": x_request_id,
-        "x-data-id": data_id,
-    }
+    headers = {"x-signature": x_signature, "x-request-id": x_request_id, "x-data-id": data_id}
     if not await provider.validate_webhook(headers, raw):
         raise HTTPException(401, "invalid_webhook_signature")
 
@@ -46,7 +43,12 @@ async def mercado_pago_webhook(
     async with SessionFactory() as session:
         async with session.begin():
             existing = await session.scalar(
-                select(PaymentEvent).where(PaymentEvent.provider_event_id == provider_event_id).with_for_update()
+                select(PaymentEvent)
+                .where(
+                    PaymentEvent.provider == "mercadopago_pix",
+                    PaymentEvent.provider_event_id == provider_event_id,
+                )
+                .with_for_update()
             )
             if existing is not None:
                 return {"accepted": True, "duplicate": True, "event_id": provider_event_id}
@@ -73,32 +75,62 @@ async def mercado_pago_webhook(
                 .with_for_update()
             )
             if payment is None:
+                enqueue_outbox(
+                    session,
+                    tenant_id=None,
+                    aggregate_type="payment",
+                    aggregate_id=data_id,
+                    event_type="payment.unknown",
+                    payload={"provider": provider.name, "provider_payment_id": data_id},
+                )
                 return {"accepted": True, "event_id": provider_event_id, "ignored": "unknown_payment"}
             if remote.amount_minor != payment.amount_minor or remote.currency != payment.currency:
                 raise HTTPException(409, "payment_amount_mismatch")
 
+            previous_status = payment.status
             payment.status = remote.status
+            payment.next_reconcile_at = next_reconcile_time(remote.status)
+            payment.reconcile_attempts = 0
+            payment.last_reconcile_error = None
             if remote.status == "approved":
                 order = await session.scalar(
-                    select(Order).where(Order.id == payment.order_id, Order.tenant_id == payment.tenant_id).with_for_update()
+                    select(Order).where(
+                        Order.id == payment.order_id,
+                        Order.tenant_id == payment.tenant_id,
+                    ).with_for_update()
                 )
                 if order is not None and order.status == "PAYMENT_PENDING":
                     await transition_order(session, payment.order_id, payment.tenant_id, "PAID")
             elif remote.status in {"cancelled", "rejected", "expired"}:
                 order = await session.scalar(
-                    select(Order).where(Order.id == payment.order_id, Order.tenant_id == payment.tenant_id).with_for_update()
+                    select(Order).where(
+                        Order.id == payment.order_id,
+                        Order.tenant_id == payment.tenant_id,
+                    ).with_for_update()
                 )
                 if order is not None and order.status == "PAYMENT_PENDING":
                     target = "EXPIRED" if remote.status == "expired" else "CANCELLED"
                     await transition_order(session, payment.order_id, payment.tenant_id, target)
+
+            if previous_status != remote.status:
+                enqueue_outbox(
+                    session,
+                    tenant_id=payment.tenant_id,
+                    aggregate_type="payment",
+                    aggregate_id=str(payment.id),
+                    event_type=f"payment.status.{remote.status}",
+                    payload={
+                        "order_id": str(payment.order_id),
+                        "provider": payment.provider,
+                        "provider_payment_id": payment.provider_payment_id,
+                    },
+                )
 
     return {"accepted": True, "event_id": provider_event_id, "fingerprint": sha256(raw).hexdigest()}
 
 
 @router.post("/{provider}", status_code=202)
 async def unsupported_provider_webhook(provider: str, request: Request) -> dict[str, object]:
-    # Generic boundary kept for providers that are not yet implemented. It does
-    # not accept payment truth; production adapters must provide verification.
     raw = await request.body()
     if len(raw) > 2_000_000:
         raise HTTPException(413, "payload_too_large")
