@@ -4,21 +4,24 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 
 ## Fase 17 — Full Multi-Tenant Security & Financial RBAC
 
-- `DEFAULT_TENANT_ID` removido das operações comerciais da API.
-- Tenant explícito em catálogo, carrinho, checkout, pagamento e entregas.
-- Refund financeiro movido para Dashboard OAuth2 + RBAC `ADMIN/OWNER` + CSRF.
-- Criação administrativa de produtos movida para Dashboard + RBAC `OPERATOR+` + CSRF.
-- Credenciais Mercado Pago resolvidas por tenant.
-- Testes de CSRF/RBAC adicionados.
+- `DEFAULT_TENANT_ID` removido das operações de promotions.
+- `COMMERCE_ADMIN_KEY` removido das operações administrativas de promotions.
+- Coupons, affiliates, VIP tiers e cashback usam `tenant_id` explícito.
+- Mutations administrativas exigem Dashboard OAuth2 + RBAC + CSRF.
+- Refund financeiro continua protegido por `ADMIN/OWNER` + CSRF.
+- Credenciais Mercado Pago permanecem isoladas por tenant.
+- Validade de coupons (`starts_at`/`ends_at`) é persistida.
+- API version `0.17.0`.
 
-A Fase 17 melhora a separação de tenant e remove o admin key legado, mas não declara readiness. APIs customer-facing ainda precisam vincular o tenant a um contexto confiável de instalação/guild do Discord antes do go-live.
+A Fase 17 fecha um bypass legado importante, mas não declara readiness. O vínculo das APIs customer-facing ao contexto confiável do guild/instalação Discord ainda precisa ser fechado no gateway/bot; IDs arbitrários enviados pelo cliente não devem determinar o tenant em produção.
 
-## Fase 16 — Multi-Tenant Security, Secret Isolation & CSRF
+## Fase 16 — Multi-Tenant Security, Managed Secrets & CSRF
 
 - Double-submit CSRF.
 - Cookie de sessão `Secure`/`SameSite=Lax`.
 - Resolver de secrets por tenant.
 - Provider Mercado Pago com credenciais por instância.
+- Vault KV v2 como adapter de secret manager.
 
 ## Fase 15 — E2E, Concurrency & Payment Sandbox
 
@@ -48,4 +51,4 @@ OAuth2/RBAC, observabilidade OpenTelemetry/Sentry, catálogo, checkout transacio
 
 ## Produção
 
-Ainda bloqueada. Antes de vendas reais: Secret Manager gerenciado, isolamento PSP por tenant, tenant binding confiável via Discord, E2E completo, concorrência PostgreSQL, sandbox PSP, webhooks tenant-aware, rate limits por rota, backup/restore, HTTPS/load balancer e validação dos gates de CI. 
+Ainda bloqueada. Antes de vendas reais: tenant binding confiável via Discord, E2E completo, concorrência PostgreSQL, sandbox PSP, Secret Manager gerenciado, webhooks tenant-aware, rate limits por rota, backup/restore, HTTPS/load balancer e validação dos gates de CI.
