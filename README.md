@@ -5,17 +5,17 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 ## Fase 14 — Integration, Concurrency & Distributed Protection
 
 - PostgreSQL 16 e Redis 7 como serviços descartáveis no GitHub Actions.
-- `alembic upgrade head` executado contra PostgreSQL do CI.
+- `alembic upgrade head` contra PostgreSQL do CI.
 - Integration tests reais para PostgreSQL e Redis.
 - Verificação concorrente de `INCR` no Redis.
 - Rate limiter distribuído reutilizável em `packages/security/rate_limit.py`.
 - Testes adicionais para `TRACE` e `TRUSTED_HOSTS`.
-- Configuração de rate limiting documentada no `.env.example`.
-- Checklist detalhado em `docs/PHASE_14.md` e `docs/SECURITY.md`.
+- Configuração de rate limiting no `.env.example`.
+- Documentação em `docs/PHASE_14.md` e `docs/SECURITY.md`.
 
 O rate limiter não é aplicado globalmente: limites devem ser definidos por rota e risco operacional. Antes do go-live, autenticação, mutations financeiras, administração e webhooks devem receber políticas específicas.
 
-A Fase 14 não declara readiness de produção. O workflow deve passar no GitHub e ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado e validação HTTPS/load balancer.
+A Fase 14 não declara readiness de produção. O workflow precisa executar e passar no GitHub. Ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado e validação HTTPS/load balancer.
 
 ## Fase 13 — Security & Production Release Gate
 
@@ -24,7 +24,7 @@ A Fase 14 não declara readiness de produção. O workflow deve passar no GitHub
 - `TRUSTED_HOSTS`, HSTS opcional e headers centralizados.
 - CodeQL, Gitleaks, `pip-audit` e Trivy.
 
-## Fase 12 — Hardening de segurança
+## Fase 12 — Hardening
 
 - Middleware ASGI de segurança e headers defensivos.
 - Request ID/correlação e limites de request.
