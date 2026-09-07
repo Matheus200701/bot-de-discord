@@ -31,3 +31,29 @@ def test_security_middleware_rejects_oversized_content_length(monkeypatch) -> No
 
     assert response.status_code == 413
     assert response.text == "request_too_large"
+
+
+def test_security_middleware_rejects_streamed_oversize(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "3")
+
+    async def app(scope, receive, send):
+        await receive()
+        await receive()
+        raise AssertionError("application should not continue after oversized chunk")
+
+    client = TestClient(SecurityMiddleware(app))
+    response = client.post("/", headers={"host": "testserver"}, content=b"abcd")
+
+    assert response.status_code == 413
+    assert response.text == "request_too_large"
+
+
+def test_security_middleware_rejects_unsupported_method() -> None:
+    async def app(scope, receive, send):
+        raise AssertionError("application should not be reached")
+
+    client = TestClient(SecurityMiddleware(app))
+    response = client.request("TRACE", "/", headers={"host": "testserver"})
+
+    assert response.status_code == 405
+    assert response.text == "method_not_allowed"
