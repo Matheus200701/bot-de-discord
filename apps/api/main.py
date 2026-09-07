@@ -15,17 +15,17 @@ from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
 from packages.database.models import FulfillmentRecord, Order, Product
 from packages.database.session import SessionFactory
-from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
+from packages.payments.factory import PaymentProviderFactory
+from packages.payments.mercadopago import MercadoPagoError
 from packages.payments.service import create_payment_intent
-from packages.security.secrets import TenantSecretResolver
 
-app = FastAPI(title="Discord Commerce API", version="0.17.0")
+app = FastAPI(title="Discord Commerce API", version="0.16.0")
 app.add_middleware(SecurityMiddleware)
 app.include_router(webhook_router)
 app.include_router(promotions_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
-secret_resolver = TenantSecretResolver()
+payment_providers = PaymentProviderFactory()
 
 class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -128,7 +128,7 @@ async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..
             order = await session.scalar(select(Order).where(Order.id == data.order_id, Order.tenant_id == data.tenant_id, Order.discord_user_id == x_discord_user_id))
             if order is None:
                 raise HTTPException(404, "order_not_found")
-            provider = MercadoPagoPixProvider(access_token=secret_resolver.mercadopago_access_token(data.tenant_id), webhook_secret=secret_resolver.mercadopago_webhook_secret(data.tenant_id))
+            provider = await payment_providers.mercadopago_pix(data.tenant_id)
             record = await create_payment_intent(session, provider, data.tenant_id, data.order_id, data.payer_email, data.idempotency_key)
             return {"id": str(record.id), "provider": record.provider, "provider_payment_id": record.provider_payment_id, "status": record.status, "amount_minor": record.amount_minor, "currency": record.currency, "checkout_url": record.checkout_url, "qr_code": record.qr_code, "qr_code_text": record.qr_code_text}
     except MercadoPagoError as exc:
