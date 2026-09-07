@@ -2,17 +2,19 @@
 
 ## Objetivo
 
-Eliminar a autorização financeira legada baseada em segredo compartilhado e tornar o tenant explícito nas operações comerciais públicas.
+Eliminar autorização administrativa por segredo compartilhado, remover o tenant padrão das rotas administrativas e tornar as operações financeiras e de loyalty tenant-scoped.
 
 ## Entregas
 
-- Removido o endpoint legado de refund com `X-Commerce-Admin-Key`/`COMMERCE_ADMIN_KEY`.
-- Refund administrativo agora exige sessão Discord, membership ativo, papel `ADMIN` ou `OWNER` e CSRF.
-- Criação administrativa de produtos foi movida para o Dashboard com tenant derivado do contexto autenticado e papel `OPERATOR+`.
-- Catálogo, carrinho, checkout, pagamento e entregas não dependem mais de `DEFAULT_TENANT_ID`.
-- Operações comerciais exigem `tenant_id` explícito e consultas cruzam `tenant_id` com IDs de objetos.
-- Credenciais Mercado Pago são resolvidas por tenant.
-- Testes de CSRF e RBAC adicionados.
+- Refund administrativo usa Dashboard OAuth2 + membership ativo + `ADMIN/OWNER` + CSRF.
+- Criação de produtos usa Dashboard + `OPERATOR+` + CSRF.
+- Coupons, affiliates e VIP tiers usam `tenant_id` explícito na rota e sessão Dashboard + `ADMIN` + CSRF.
+- Cashback administrativo usa `tenant_id` explícito e sessão Dashboard + `ADMIN`.
+- Removido o uso de `COMMERCE_ADMIN_KEY` das operações de promotions.
+- Removido o uso de `DEFAULT_TENANT_ID` de promotions.
+- `starts_at`/`ends_at` de coupons agora são persistidos e validados.
+- Catálogo, carrinho, checkout, pagamento e entregas usam tenant explícito e consultas tenant-scoped.
+- Credenciais Mercado Pago continuam resolvidas por tenant através do `PaymentProviderFactory`.
 
 ## Modelo de autorização
 
@@ -20,16 +22,18 @@ Eliminar a autorização financeira legada baseada em segredo compartilhado e to
 
 `OPERATOR`: catálogo e operações não financeiras.
 
-`ADMIN`: operações administrativas e financeiras, incluindo refund.
+`ADMIN`: operações administrativas e financeiras.
 
 `OWNER`: privilégios administrativos máximos do tenant.
 
-A identidade do Dashboard vem da sessão OAuth2; um Discord user ID fornecido pelo cliente não é tratado como prova de identidade administrativa.
+A identidade administrativa vem de sessão OAuth2 do Discord; IDs enviados pelo cliente não são prova de privilégio.
 
-## Limitação importante
+## Segurança
 
-O tenant informado nas APIs de checkout/customer-facing ainda precisa ser associado a uma identidade de instalação/guild ou contexto confiável do Discord em uma etapa posterior. Um cliente arbitrário não deve receber autorização para escolher qualquer tenant. A separação de dados no banco impede cross-tenant object lookup, mas a autorização do contexto de entrada deve ser fechada no gateway/bot antes do go-live.
+OWASP ASVS 5.0 exige que controles de acesso sejam aplicados no servidor, com least privilege e proteção contra manipulação de atributos usados pela autorização. citeturn945026search5turn945026search7
+
+As APIs customer-facing ainda precisam de um mecanismo confiável de binding entre a requisição e o guild/instalação Discord antes do go-live. OAuth2 do Discord suporta `GUILD_INSTALL` e `USER_INSTALL`, e recomenda `state` para proteger o fluxo OAuth2. citeturn557521view0
 
 ## Produção
 
-Ainda não declarar readiness. Executar CI, testes E2E, validação de isolamento com dois tenants, sandbox PSP, Secret Manager real, webhooks tenant-aware, rate limits por rota, backup/restore e HTTPS/load balancer.
+Ainda não declarar readiness. Executar CI, E2E, isolamento com dois tenants, sandbox PSP, Secret Manager real, tenant binding Discord no gateway/bot, rate limits por rota, backup/restore e HTTPS/load balancer.
