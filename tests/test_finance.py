@@ -1,9 +1,4 @@
-from dataclasses import dataclass
-from uuid import uuid4
-
-import pytest
-
-from packages.commerce.services import InvalidOrderTransition, ORDER_TRANSITIONS
+from packages.commerce.services import ORDER_TRANSITIONS
 from packages.database.models import LedgerEntry
 
 
