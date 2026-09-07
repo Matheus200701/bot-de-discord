@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.commerce.services import CommerceError, transition_order
