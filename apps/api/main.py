@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -12,10 +13,11 @@ from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
 from packages.database.models import Order, Product
 from packages.database.session import SessionFactory
+from packages.payments.finance import request_refund
 from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.3.0")
+app = FastAPI(title="Discord Commerce API", version="0.4.0")
 app.include_router(webhook_router)
 DEFAULT_TENANT_ID = UUID(os.getenv("DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"))
 
@@ -49,6 +51,12 @@ class PaymentIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
+class RefundIn(BaseModel):
+    amount_minor: int | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 async def db_session() -> AsyncSession:
     return SessionFactory()
 
@@ -72,9 +80,7 @@ async def ready(session: AsyncSession = Depends(db_session)) -> dict[str, str]:
 @app.get("/api/v1/products", response_model=list[ProductOut])
 async def products(session: AsyncSession = Depends(db_session)) -> list[Product]:
     try:
-        result = await session.scalars(
-            select(Product).where(Product.tenant_id == DEFAULT_TENANT_ID).order_by(Product.created_at.desc())
-        )
+        result = await session.scalars(select(Product).where(Product.tenant_id == DEFAULT_TENANT_ID).order_by(Product.created_at.desc()))
         return list(result.all())
     finally:
         await session.close()
@@ -98,9 +104,7 @@ async def create_product(data: ProductIn, session: AsyncSession = Depends(db_ses
 @app.get("/api/v1/products/{product_id}", response_model=ProductOut)
 async def get_product(product_id: UUID, session: AsyncSession = Depends(db_session)) -> Product:
     try:
-        product = await session.scalar(
-            select(Product).where(Product.id == product_id, Product.tenant_id == DEFAULT_TENANT_ID)
-        )
+        product = await session.scalar(select(Product).where(Product.id == product_id, Product.tenant_id == DEFAULT_TENANT_ID))
         if product is None:
             raise HTTPException(404, "product_not_found")
         return product
@@ -109,11 +113,7 @@ async def get_product(product_id: UUID, session: AsyncSession = Depends(db_sessi
 
 
 @app.post("/api/v1/cart/items", status_code=204)
-async def cart_add(
-    data: CartItemIn,
-    x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"),
-    session: AsyncSession = Depends(db_session),
-) -> None:
+async def cart_add(data: CartItemIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> None:
     try:
         async with session.begin():
             await add_to_cart(session, DEFAULT_TENANT_ID, x_discord_user_id, data.product_id, data.quantity)
@@ -125,11 +125,7 @@ async def cart_add(
 
 
 @app.post("/api/v1/checkout", status_code=201)
-async def checkout(
-    data: CheckoutIn,
-    x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"),
-    session: AsyncSession = Depends(db_session),
-) -> dict[str, object]:
+async def checkout(data: CheckoutIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     try:
         async with session.begin():
             order = await create_order_from_cart(session, DEFAULT_TENANT_ID, x_discord_user_id, data.idempotency_key)
@@ -145,44 +141,49 @@ async def checkout(
 
 
 @app.post("/api/v1/payments/mercadopago/pix", status_code=201)
-async def create_pix_payment(
-    data: PaymentIn,
-    x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"),
-    session: AsyncSession = Depends(db_session),
-) -> dict[str, object]:
+async def create_pix_payment(data: PaymentIn, x_discord_user_id: int = Header(..., alias="X-Discord-User-ID"), session: AsyncSession = Depends(db_session)) -> dict[str, object]:
     try:
         async with session.begin():
-            order = await session.scalar(
-                select(Order).where(
-                    Order.id == data.order_id,
-                    Order.tenant_id == DEFAULT_TENANT_ID,
-                    Order.discord_user_id == x_discord_user_id,
-                )
-            )
+            order = await session.scalar(select(Order).where(Order.id == data.order_id, Order.tenant_id == DEFAULT_TENANT_ID, Order.discord_user_id == x_discord_user_id))
             if order is None:
                 raise HTTPException(404, "order_not_found")
-            record = await create_payment_intent(
-                session,
-                MercadoPagoPixProvider(),
-                DEFAULT_TENANT_ID,
-                data.order_id,
-                data.payer_email,
-                data.idempotency_key,
-            )
-            return {
-                "id": str(record.id),
-                "provider": record.provider,
-                "provider_payment_id": record.provider_payment_id,
-                "status": record.status,
-                "amount_minor": record.amount_minor,
-                "currency": record.currency,
-                "checkout_url": record.checkout_url,
-                "qr_code": record.qr_code,
-                "qr_code_text": record.qr_code_text,
-            }
+            record = await create_payment_intent(session, MercadoPagoPixProvider(), DEFAULT_TENANT_ID, data.order_id, data.payer_email, data.idempotency_key)
+            return {"id": str(record.id), "provider": record.provider, "provider_payment_id": record.provider_payment_id, "status": record.status, "amount_minor": record.amount_minor, "currency": record.currency, "checkout_url": record.checkout_url, "qr_code": record.qr_code, "qr_code_text": record.qr_code_text}
     except MercadoPagoError as exc:
         await session.rollback()
         raise HTTPException(502, str(exc)) from exc
+    except CommerceError as exc:
+        await session.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        await session.close()
+
+
+@app.post("/api/v1/orders/{order_id}/refund", status_code=202)
+async def create_refund(
+    order_id: UUID,
+    data: RefundIn,
+    x_admin_key: str | None = Header(default=None, alias="X-Commerce-Admin-Key"),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, object]:
+    configured_key = os.getenv("COMMERCE_ADMIN_KEY")
+    if not configured_key:
+        await session.close()
+        raise HTTPException(503, "refund_admin_auth_not_configured")
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, configured_key):
+        await session.close()
+        raise HTTPException(403, "forbidden")
+    try:
+        async with session.begin():
+            refund = await request_refund(
+                session,
+                tenant_id=DEFAULT_TENANT_ID,
+                order_id=order_id,
+                amount_minor=data.amount_minor,
+                idempotency_key=data.idempotency_key,
+                reason=data.reason,
+            )
+            return {"id": str(refund.id), "status": refund.status, "amount_minor": refund.amount_minor, "currency": refund.currency}
     except CommerceError as exc:
         await session.rollback()
         raise HTTPException(400, str(exc)) from exc
