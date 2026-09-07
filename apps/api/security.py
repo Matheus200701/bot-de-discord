@@ -8,7 +8,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 class SecurityMiddleware:
-    """Small ASGI hardening layer with no in-process authentication state."""
+    """ASGI hardening layer with request-size, host and HTTP-method controls."""
+
+    ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -22,6 +24,11 @@ class SecurityMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method", "")).upper()
+        if method not in self.ALLOWED_METHODS:
+            await self._simple_response(send, 405, b"method_not_allowed")
             return
 
         headers = {k.lower(): v for k, v in scope.get("headers", [])}
@@ -44,6 +51,23 @@ class SecurityMiddleware:
         if len(request_id) > 128 or not request_id:
             request_id = secrets.token_hex(16)
 
+        received = 0
+        exhausted = False
+
+        async def limited_receive() -> Message:
+            nonlocal received, exhausted
+            message = await receive()
+            if message["type"] != "http.request":
+                return message
+            body = message.get("body", b"")
+            received += len(body)
+            if received > self.max_body_bytes:
+                exhausted = True
+                return {"type": "http.disconnect"}
+            if not message.get("more_body", False):
+                exhausted = True
+            return message
+
         async def send_with_security(message: Message) -> None:
             if message["type"] == "http.response.start":
                 response_headers = list(message.get("headers", []))
@@ -58,13 +82,29 @@ class SecurityMiddleware:
                     ]
                 )
                 if os.getenv("ENFORCE_HSTS", "false").lower() == "true":
-                    response_headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
+                    response_headers.append(
+                        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+                    )
                 message = {**message, "headers": response_headers}
             await send(message)
 
-        await self.app(scope, receive, send_with_security)
+        await self.app(scope, limited_receive, send_with_security)
+
+        if exhausted and received > self.max_body_bytes:
+            # The application may have already emitted a response after receiving the oversized
+            # chunk. The request is therefore terminated without attempting a second response.
+            return
 
     @staticmethod
     async def _simple_response(send: Send, status: int, body: bytes) -> None:
-        await send({"type": "http.response.start", "status": status, "headers": [(b"content-type", b"text/plain"), (b"content-length", str(len(body)).encode())]})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"text/plain"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
         await send({"type": "http.response.body", "body": body})
