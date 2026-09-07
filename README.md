@@ -17,11 +17,29 @@ Discord App → Discord Layer → Service Layer → Commerce / Payments / Invent
 - httpx
 - Docker + GitHub Actions
 
-## Fase 2/3 implementada
+## Fase 2/3
 
-A persistência de produtos saiu do armazenamento em memória e passou para PostgreSQL. O domínio agora possui `Cart`, `CartItem`, `OrderItem` e `InventoryReservation`, com migrations Alembic (`0001_core` e `0002_cart_checkout`). O checkout recalcula os preços no servidor, bloqueia as linhas de produto dentro da transação, reserva estoque e transforma o carrinho em pedido de forma atômica.
+A persistência de produtos saiu do armazenamento em memória e passou para PostgreSQL. O domínio possui `Cart`, `CartItem`, `OrderItem` e `InventoryReservation`, com migrations Alembic. O checkout recalcula os preços no servidor, bloqueia linhas de produto dentro da transação, reserva estoque e transforma o carrinho em pedido de forma atômica.
 
-A chave de idempotência do pedido continua protegida por constraint única. A máquina de estados impede transições arbitrárias e mantém estados terminais explícitos.
+Reservas possuem expiração/release por worker, reduzindo o risco de estoque ficar preso quando um pagamento não é concluído.
+
+## Fase 5 — pagamentos
+
+Foi adicionado o primeiro adapter PSP real: **Mercado Pago Pix**.
+
+- `POST /api/v1/payments/mercadopago/pix`
+- API oficial de pagamentos `/v1/payments`
+- `X-Idempotency-Key` no request ao PSP
+- persistência de `PaymentIntentRecord`
+- webhook dedicado `/webhooks/payments/mercadopago_pix`
+- validação HMAC de `x-signature`
+- validação usando `x-request-id` + `data.id`
+- `PaymentEvent` idempotente antes dos efeitos de negócio
+- confirmação server-to-server do pagamento
+- conferência de valor e moeda
+- transições `PAYMENT_PENDING -> PAID/CANCELLED/EXPIRED`
+
+As credenciais ficam fora do código e devem ser fornecidas por secret manager/ambiente. Stripe permanece apenas como contrato/estrutura até sua implementação ser validada contra a documentação atual do provedor.
 
 ## Discord 2026
 
@@ -61,7 +79,8 @@ docker compose up --build
 - `GET /api/v1/products/{product_id}`
 - `POST /api/v1/cart/items` com `X-Discord-User-ID`
 - `POST /api/v1/checkout` com `X-Discord-User-ID` e `idempotency_key`
-- `POST /webhooks/payments/{provider}`
+- `POST /api/v1/payments/mercadopago/pix` com `X-Discord-User-ID`
+- `POST /webhooks/payments/mercadopago_pix`
 
 ## Regras financeiras
 
@@ -69,15 +88,15 @@ Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio p
 
 ## Produção
 
-Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secrets manager, domínio HTTPS, OAuth2 redirect URI, Discord Application ID/public key/token, PSPs e políticas de retenção/LGPD. Rode CI, migrations e testes de restauração antes de habilitar vendas reais.
+Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secrets manager, domínio HTTPS, OAuth2 redirect URI, Discord Application ID/public key/token, credenciais PSP e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
 
 ## Próximas fases
 
-1. Adaptadores PIX/Mercado Pago/Stripe com assinatura e reconciliação reais.
-2. Reserva com expiração/release e workers assíncronos.
-3. Entrega digital e Discord Roles.
-4. Cupons, cashback, afiliados e VIP.
-5. Tickets, reembolsos e disputas.
+1. Reconciliação periódica de pagamentos + retries/backoff/circuit breaker.
+2. Outbox/event bus e processamento assíncrono confiável.
+3. Refund workflow e disputas/chargebacks.
+4. Entrega digital e Discord Roles.
+5. Cupons, cashback, afiliados e VIP.
 6. Dashboard Next.js/TypeScript + OAuth2/account linking.
 7. OpenTelemetry, métricas, Sentry e alertas.
 8. Hardening, testes de concorrência E2E e deploy de produção.
