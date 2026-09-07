@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import asyncpg
@@ -21,4 +22,16 @@ async def test_postgres_and_redis_are_reachable() -> None:
     try:
         assert await redis.ping() is True
     finally:
+        await redis.aclose()
+
+
+async def test_redis_incr_is_atomic_under_concurrency() -> None:
+    redis = Redis.from_url(os.environ["REDIS_URL"])
+    key = "phase14:concurrency"
+    try:
+        await redis.delete(key)
+        values = await asyncio.gather(*(redis.incr(key) for _ in range(50)))
+        assert sorted(values) == list(range(1, 51))
+    finally:
+        await redis.delete(key)
         await redis.aclose()
