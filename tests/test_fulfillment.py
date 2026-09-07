@@ -1,3 +1,4 @@
+from packages.commerce.services import ORDER_TRANSITIONS
 from packages.delivery.service import _int_or_none, _string_or_none
 
 
@@ -14,3 +15,8 @@ def test_supported_delivery_types_are_explicit() -> None:
     assert "discord_role" in supported
     assert "digital_link" in supported
     assert "secret_text" not in supported
+
+
+def test_order_state_exposes_fulfillment_window() -> None:
+    assert "FULFILLING" in ORDER_TRANSITIONS["PAID"]
+    assert "FULFILLED" in ORDER_TRANSITIONS["FULFILLING"]
