@@ -1,0 +1,45 @@
+name: Phase 14 Integration
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/discord-commerce-platform-2026]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commerce
+          POSTGRES_PASSWORD: commerce
+          POSTGRES_DB: commerce
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U commerce -d commerce"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://commerce:commerce@localhost:5432/commerce
+      REDIS_URL: redis://localhost:6379/0
+      APP_ENV: test
+      DISCORD_TOKEN: test
+      DISCORD_APPLICATION_ID: test
+      DISCORD_PUBLIC_KEY: test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install .[dev]
+      - name: Validate migrations
+        run: alembic upgrade head
+      - name: Run integration-tagged tests
+        run: pytest -q tests -m integration
