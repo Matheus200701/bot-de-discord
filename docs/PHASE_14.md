@@ -7,7 +7,7 @@
 - Smoke integration test real para PostgreSQL e Redis.
 - Verificação concorrente de `INCR` no Redis.
 - Rate limiter distribuído reutilizável com Redis, janela fixa e expiração.
-- Testes de `TRACE` e `TRUSTED_HOSTS`.
+- Testes de `TRACE`, `TRUSTED_HOSTS` e limite de body.
 - Configuração de limites no `.env.example`.
 
 ## Rate limiting
@@ -18,7 +18,7 @@ O limiter não é aplicado globalmente: limites devem ser definidos por rota e r
 
 ## Concorrência
 
-O checkout existente utiliza locks de linha no PostgreSQL e o worker utiliza `SKIP LOCKED`. A infraestrutura da Fase 14 permite executar testes concorrentes reais contra PostgreSQL/Redis descartáveis. O smoke test não substitui o E2E de corrida do checkout.
+O checkout utiliza locks de linha no PostgreSQL e o worker utiliza `SKIP LOCKED`. A infraestrutura da Fase 14 permite executar testes concorrentes reais contra PostgreSQL/Redis descartáveis. O smoke test não substitui o E2E de corrida do checkout.
 
 ## Status
 
