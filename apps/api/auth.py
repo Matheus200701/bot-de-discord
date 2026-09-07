@@ -19,24 +19,9 @@ STATE_COOKIE = "commerce_oauth_state"
 
 
 @router.get("/login", response_class=RedirectResponse)
-async def login(response: Response) -> RedirectResponse:
+async def login() -> RedirectResponse:
     session = SessionFactory()
     try:
-        async with session.begin():
-            state = await begin_oauth(session)
-        redirect = RedirectResponse(oauth_authorize_url(state), status_code=302, headers={"Cache-Control": "no-store"})
-        redirect.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True, secure=True, samesite="lax", path="/")
-        return redirect
-    finally:
-        await session.close()
-
-
-@router.get("/link", response_class=RedirectResponse)
-async def link_discord(response: Response, session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE)) -> RedirectResponse:
-    session = SessionFactory()
-    try:
-        if await get_session_user(session, session_token) is None:
-            raise HTTPException(401, "authentication_required")
         async with session.begin():
             state = await begin_oauth(session)
         redirect = RedirectResponse(oauth_authorize_url(state), status_code=302, headers={"Cache-Control": "no-store"})
@@ -94,12 +79,7 @@ async def me(session_token: str | None = Cookie(default=None, alias=SESSION_COOK
         user = await get_session_user(session, session_token)
         if user is None:
             raise HTTPException(401, "authentication_required")
-        memberships = await session.execute(
-            select(Tenant.id, Tenant.discord_guild_id, Tenant.name, TenantMembership.role)
-            .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
-            .where(TenantMembership.user_id == user.id, TenantMembership.active.is_(True), Tenant.active.is_(True))
-            .order_by(Tenant.name)
-        )
+        memberships = await session.execute(select(Tenant.id, Tenant.discord_guild_id, Tenant.name, TenantMembership.role).join(TenantMembership, TenantMembership.tenant_id == Tenant.id).where(TenantMembership.user_id == user.id, TenantMembership.active.is_(True), Tenant.active.is_(True)).order_by(Tenant.name))
         return {"id": str(user.id), "discord_user_id": user.discord_user_id, "username": user.username, "global_name": user.global_name, "tenants": [{"id": str(row.id), "guild_id": row.discord_guild_id, "name": row.name, "role": row.role} for row in memberships]}
     finally:
         await session.close()
