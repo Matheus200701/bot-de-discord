@@ -16,6 +16,7 @@ from packages.database.session import SessionFactory
 router = APIRouter(prefix="/api/v1/auth/discord", tags=["auth"])
 SESSION_COOKIE = "commerce_session"
 STATE_COOKIE = "commerce_oauth_state"
+CSRF_COOKIE = "commerce_csrf"
 
 
 @router.get("/login", response_class=RedirectResponse)
@@ -46,7 +47,9 @@ async def callback(code: str, state: str, oauth_state: str | None = Cookie(defau
             user = await upsert_identity(session, user_data, guilds)
             session_token = await create_session(session, user)
         response = RedirectResponse("/", status_code=302, headers={"Cache-Control": "no-store"})
+        csrf_token = secrets.token_urlsafe(32)
         response.set_cookie(SESSION_COOKIE, session_token, max_age=604800, httponly=True, secure=True, samesite="lax", path="/")
+        response.set_cookie(CSRF_COOKIE, csrf_token, max_age=604800, httponly=False, secure=True, samesite="lax", path="/")
         response.delete_cookie(STATE_COOKIE, path="/")
         return response
     except HTTPException:
@@ -68,6 +71,7 @@ async def logout(response: Response, session_token: str | None = Cookie(default=
                 row.revoked_at = datetime.now(timezone.utc)
                 await session.commit()
         response.delete_cookie(SESSION_COOKIE, path="/")
+        response.delete_cookie(CSRF_COOKIE, path="/")
     finally:
         await session.close()
 
