@@ -5,7 +5,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, HTTPException, Response
+from fastapi import APIRouter, Cookie, Header, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
@@ -17,6 +17,11 @@ router = APIRouter(prefix="/api/v1/auth/discord", tags=["auth"])
 SESSION_COOKIE = "commerce_session"
 STATE_COOKIE = "commerce_oauth_state"
 CSRF_COOKIE = "commerce_csrf"
+
+
+def require_csrf(csrf_cookie: str | None, csrf_header: str | None) -> None:
+    if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+        raise HTTPException(403, "csrf_validation_failed")
 
 
 @router.get("/login", response_class=RedirectResponse)
@@ -61,7 +66,8 @@ async def callback(code: str, state: str, oauth_state: str | None = Cookie(defau
 
 
 @router.post("/logout", status_code=204)
-async def logout(response: Response, session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE)) -> None:
+async def logout(response: Response, session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE), csrf_cookie: str | None = Cookie(default=None, alias=CSRF_COOKIE), x_csrf_token: str | None = Header(default=None, alias="X-CSRF-Token")) -> None:
+    require_csrf(csrf_cookie, x_csrf_token)
     session = SessionFactory()
     try:
         if session_token:
