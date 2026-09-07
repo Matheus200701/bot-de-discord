@@ -50,7 +50,7 @@ Entregas possuem estados persistentes (`PENDING`, `PROCESSING`, `DELIVERED`, `FA
 
 ### Discord Role Delivery
 
-A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment. citeturn431877view0turn198211view0
+A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment.
 
 ## Fases 2–7
 
@@ -77,7 +77,7 @@ O fulfillment nunca libera acesso somente porque o pedido foi criado. O gatilho 
 
 ## Produção
 
-Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secret manager, HTTPS, OAuth2 redirect URI, Discord credentials, credenciais PSP, `COMMERCE_ADMIN_KEY` forte, permissões mínimas do bot e políticas de retenção/LGPD. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
+Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secret manager, HTTPS, OAuth2 redirect URI, Discord credentials, credenciais PSP, `COMMERCE_ADMIN_KEY` forte, permissões mínimas do bot e políticas de retenção/LGPD. Para cargos, o bot precisa estar acima dos cargos que concederá e ter `MANAGE_ROLES`. Rode CI, migrations, testes de restauração e testes sandbox antes de habilitar vendas reais.
 
 ## Próximas fases
 
