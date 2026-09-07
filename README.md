@@ -1,117 +1,83 @@
-# Bot de Discord
+# Discord Commerce Platform 2026
 
-Bot Discord em Python com `discord.py 2.x`, comandos slash/híbridos em português, SQLite, sistema de Cogs, moderação, utilidades e tickets.
+Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + observabilidade, em vez de um bot monolítico.
 
-## Recursos
+## Arquitetura
 
-- `/ping` — mostra a latência do bot.
-- `/ajuda` — mostra a central de comandos.
-- `/avatar` — mostra o avatar de um membro.
-- `/userinfo` — mostra informações de um membro.
-- `/serverinfo` — mostra informações do servidor.
-- `/botinfo` — mostra informações técnicas do bot.
-- `/banir` — bane um membro.
-- `/expulsar` — expulsa um membro.
-- `/limpar` — apaga mensagens do canal.
-- `/timeout` — silencia temporariamente um membro.
-- `/untimeout` — remove o timeout.
-- `/avisar` — registra um aviso no banco SQLite.
-- `/avisos` — lista os avisos de um membro.
-- `/ticketpainel` — cria painel com botão para abrir tickets.
+Discord App → Discord Layer → Service Layer → Commerce / Payments / Inventory / Support / Customers → Event System → PostgreSQL + Redis → External APIs.
 
-## Estrutura
+## Stack
 
-```txt
-bot-de-discord/
-├── main.py
-├── config.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-├── cogs/
-│   ├── __init__.py
-│   ├── utilidade.py
-│   ├── moderacao.py
-│   └── tickets.py
-├── database/
-│   ├── __init__.py
-│   └── database.py
-├── utils/
-│   ├── __init__.py
-│   └── embeds.py
-└── data/
-    └── .gitkeep
-```
+- Python 3.12+
+- discord.py 2.x
+- FastAPI + Pydantic
+- SQLAlchemy 2.x + asyncpg + Alembic
+- PostgreSQL 17
+- Redis 8
+- httpx
+- Docker + GitHub Actions
 
-## Como configurar
+## Fase 2/3 implementada
 
-### 1. Instale o Python
+A persistência de produtos saiu do armazenamento em memória e passou para PostgreSQL. O domínio agora possui `Cart`, `CartItem`, `OrderItem` e `InventoryReservation`, com migrations Alembic (`0001_core` e `0002_cart_checkout`). O checkout recalcula os preços no servidor, bloqueia as linhas de produto dentro da transação, reserva estoque e transforma o carrinho em pedido de forma atômica.
 
-Use Python 3.11 ou superior.
+A chave de idempotência do pedido continua protegida por constraint única. A máquina de estados impede transições arbitrárias e mantém estados terminais explícitos.
 
-### 2. Instale as dependências
+## Discord 2026
 
-```bash
-pip install -r requirements.txt
-```
+O projeto foi auditado contra a documentação oficial atual. Application Commands, user/guild installation, OAuth2, Components, Modals, Account Linking e monetização oficial são tratados segundo o suporte e as restrições documentadas. Veja `DISCORD_COMPATIBILITY.md`.
 
-### 3. Configure o token
+A arquitetura não assume que Premium Apps seja um gateway universal para qualquer mercadoria: SKUs/assinaturas nativas do Discord ficam separados da camada externa de pagamentos e dependem de elegibilidade do Discord.
 
-Copie o arquivo `.env.example` para `.env`:
+## Desenvolvimento
 
 ```bash
 cp .env.example .env
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+alembic upgrade head
+uvicorn apps.api.main:app --reload
 ```
 
-No Windows PowerShell:
-
-```powershell
-copy .env.example .env
-```
-
-Depois edite o `.env` e coloque o token real do bot:
-
-```env
-DISCORD_TOKEN=SEU_TOKEN_AQUI
-PREFIX=!
-DATABASE_PATH=data/bot.db
-OWNER_ID=0
-MESSAGE_CONTENT_INTENT=false
-```
-
-Nunca envie o arquivo `.env` para o GitHub.
-
-### 4. Ative permissões no Discord Developer Portal
-
-No painel do bot, ative estas permissões/intents conforme o uso:
-
-- Server Members Intent: recomendado para comandos com membros.
-- Message Content Intent: só precisa ativar se quiser usar comandos por prefixo, como `!ping`. Para usar apenas slash commands, pode deixar `false` no `.env`.
-
-### 5. Convide o bot
-
-Permissões recomendadas:
-
-- Send Messages
-- Embed Links
-- Read Message History
-- Manage Messages
-- Kick Members
-- Ban Members
-- Moderate Members
-- Manage Channels
-- Use Slash Commands
-
-### 6. Inicie o bot
+Bot:
 
 ```bash
-python main.py
+python -m apps.bot.main
 ```
 
-Ao iniciar, o bot sincroniza os comandos slash automaticamente.
+Docker:
 
-## Observações
+```bash
+docker compose up --build
+```
 
-- O banco SQLite fica em `data/bot.db` e é criado automaticamente.
-- O sistema de tickets cria a categoria `Tickets` automaticamente se ela não existir.
-- O projeto foi feito para ser simples de expandir com novas Cogs.
+## Endpoints atuais
+
+- `GET /health`
+- `GET /ready`
+- `GET /api/v1/products`
+- `POST /api/v1/products`
+- `GET /api/v1/products/{product_id}`
+- `POST /api/v1/cart/items` com `X-Discord-User-ID`
+- `POST /api/v1/checkout` com `X-Discord-User-ID` e `idempotency_key`
+- `POST /webhooks/payments/{provider}`
+
+## Regras financeiras
+
+Valores de dinheiro usam unidades menores inteiras (`price_minor`) no domínio persistente. O cliente nunca define o preço final; a aplicação recalcula o checkout no servidor. Eventos de pagamento devem ser persistidos com `provider_event_id` único antes de executar efeitos.
+
+## Produção
+
+Antes do primeiro deploy, configure PostgreSQL gerenciado, Redis gerenciado, secrets manager, domínio HTTPS, OAuth2 redirect URI, Discord Application ID/public key/token, PSPs e políticas de retenção/LGPD. Rode CI, migrations e testes de restauração antes de habilitar vendas reais.
+
+## Próximas fases
+
+1. Adaptadores PIX/Mercado Pago/Stripe com assinatura e reconciliação reais.
+2. Reserva com expiração/release e workers assíncronos.
+3. Entrega digital e Discord Roles.
+4. Cupons, cashback, afiliados e VIP.
+5. Tickets, reembolsos e disputas.
+6. Dashboard Next.js/TypeScript + OAuth2/account linking.
+7. OpenTelemetry, métricas, Sentry e alertas.
+8. Hardening, testes de concorrência E2E e deploy de produção.
