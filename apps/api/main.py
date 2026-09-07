@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.auth import router as auth_router
 from apps.api.dashboard import router as dashboard_router
 from apps.api.promotions import router as promotions_router
+from apps.api.security import SecurityMiddleware
 from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
 from packages.database.models import FulfillmentRecord, Order, Product
@@ -20,7 +21,8 @@ from packages.payments.finance import request_refund
 from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
 
-app = FastAPI(title="Discord Commerce API", version="0.8.0")
+app = FastAPI(title="Discord Commerce API", version="0.9.0")
+app.add_middleware(SecurityMiddleware)
 app.include_router(webhook_router)
 app.include_router(promotions_router)
 app.include_router(auth_router)
