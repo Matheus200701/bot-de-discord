@@ -15,7 +15,6 @@ class Base(DeclarativeBase):
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = (UniqueConstraint("tenant_id", "sku", name="uq_product_tenant_sku"),)
-
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     sku: Mapped[str] = mapped_column(String(80))
@@ -33,7 +32,6 @@ class Product(Base):
 class Cart(Base):
     __tablename__ = "carts"
     __table_args__ = (UniqueConstraint("tenant_id", "discord_user_id", name="uq_cart_tenant_user"),)
-
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     discord_user_id: Mapped[int] = mapped_column(BigInteger(), index=True)
@@ -46,7 +44,6 @@ class Cart(Base):
 class CartItem(Base):
     __tablename__ = "cart_items"
     __table_args__ = (UniqueConstraint("cart_id", "product_id", name="uq_cart_item_product"),)
-
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     cart_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("carts.id", ondelete="CASCADE"), index=True)
     product_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("products.id"), index=True)
@@ -84,7 +81,6 @@ class OrderItem(Base):
 class InventoryReservation(Base):
     __tablename__ = "inventory_reservations"
     __table_args__ = (UniqueConstraint("order_id", "product_id", name="uq_reservation_order_product"),)
-
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     order_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), index=True)
@@ -93,6 +89,24 @@ class InventoryReservation(Base):
     status: Mapped[str] = mapped_column(String(16), default="RESERVED", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PaymentIntentRecord(Base):
+    __tablename__ = "payment_intents"
+    __table_args__ = (UniqueConstraint("provider", "provider_payment_id", name="uq_payment_provider_external"),)
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    order_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    provider_payment_id: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger())
+    currency: Mapped[str] = mapped_column(String(3))
+    checkout_url: Mapped[str | None] = mapped_column(Text())
+    qr_code: Mapped[str | None] = mapped_column(Text())
+    qr_code_text: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class PaymentEvent(Base):
