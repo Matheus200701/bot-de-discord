@@ -1,43 +1,57 @@
 # Discord Commerce Platform 2026
 
-Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + dashboard + observabilidade, em vez de um bot monolítico.
+Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + observabilidade, em vez de um bot monolítico.
 
-## Fase 10 — Dashboard + OAuth2 + Account Linking + RBAC
+## Fase 11 — Observabilidade
 
-O painel administrativo agora possui autenticação baseada no Discord e isolamento multi-tenant.
+A plataforma agora possui uma camada de observabilidade opcional e segura:
 
-- **OAuth2 Authorization Code:** login pelo Discord com `identify guilds`, callback HTTPS e `state` de uso único armazenado com hash; o cookie `state` também é validado para reduzir risco de CSRF.
-- **Sessão web:** cookie `HttpOnly`, `Secure`, `SameSite=Lax`, token aleatório armazenado somente como hash no PostgreSQL e revogação no logout.
-- **Identidade Discord:** `DashboardUser` vincula o usuário do painel ao `discord_user_id`.
-- **Account linking:** a conta Discord é a identidade autenticada do dashboard; o backend nunca aceita um Discord user ID enviado pelo cliente para definir o administrador.
-- **Multi-tenant:** cada servidor autorizado é representado por `Tenant`; o usuário recebe membership somente em guilds onde é owner ou possui `MANAGE_GUILD`.
-- **RBAC:** `OWNER`, `ADMIN`, `OPERATOR` e `VIEWER`, aplicados no backend antes de consultar dados do tenant.
-- **Auditoria:** estrutura `AuditLog` preparada para registrar ações administrativas e recursos afetados.
-- **Dashboard:** visão geral, faturamento, pedidos recentes, produtos, tenant selecionado e papel RBAC.
+- **OpenTelemetry:** traces e métricas com resource attributes de serviço/versão/ambiente.
+- **Instrumentação:** FastAPI, SQLAlchemy e HTTPX.
+- **Sentry:** captura de exceções e tracing opcional, sem PII padrão; cookies, headers e payload de request são removidos antes do envio.
+- **Bootstrap precoce:** `sitecustomize.py` inicializa a telemetria antes dos imports da aplicação.
+- **Operação:** SLOs, alertas e runbook em `docs/OBSERVABILITY.md`.
+- **Privacidade:** nenhum token, cookie, segredo PSP ou dado financeiro deve ser enviado como atributo de telemetria.
 
-As APIs OAuth do Discord usam `application/x-www-form-urlencoded` no token endpoint e recomendam o parâmetro `state` para proteção contra CSRF. Os escopos utilizados são `identify` e `guilds`. citeturn829118view0
+Configuração principal no `.env`:
 
-### Rotas de autenticação
+```dotenv
+SENTRY_DSN=
+SENTRY_TRACES_SAMPLE_RATE=0.05
+SENTRY_PROFILES_SAMPLE_RATE=0
+OTEL_SERVICE_NAME=discord-commerce-platform
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=
+OTEL_EXPORTER_OTLP_HEADERS=
+```
 
-- `GET /api/v1/auth/discord/login`
-- `GET /api/v1/auth/discord/callback`
-- `POST /api/v1/auth/discord/logout`
-- `GET /api/v1/auth/discord/me`
+Sem DSN ou endpoints OTLP configurados, a telemetria externa permanece desativada e a aplicação continua funcionando.
 
-### APIs do dashboard
+## Fase 10 — Dashboard / OAuth2 / RBAC
 
-- `GET /api/v1/dashboard/{tenant_id}/overview`
-- `GET /api/v1/dashboard/{tenant_id}/products`
-- `GET /api/v1/dashboard/{tenant_id}/orders`
-- `GET /api/v1/dashboard/{tenant_id}/members`
+- Dashboard Next.js/TypeScript operacional.
+- Login OAuth2 Authorization Code com Discord.
+- `state` aleatório de uso único + cookie `HttpOnly` para proteção CSRF.
+- Sessões web com token aleatório armazenado somente como hash.
+- `DashboardUser`, `Tenant` e `TenantMembership`.
+- Isolamento multi-tenant no backend.
+- Papéis `OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`.
+- APIs de overview, pedidos, produtos e membros protegidas por RBAC.
+- Estrutura de auditoria com `AuditLog`.
 
 ## Fase 9 — cupons, cashback, afiliados e VIP
 
-O checkout suporta promoções e fidelização com valores financeiros em unidades menores e percentuais em basis points.
+O checkout suporta promoções e fidelização sem usar `float` para valores financeiros.
+
+- Cupons percentuais/fixos, validade, moeda, pedido mínimo, limites global/por usuário e limite de desconto.
+- Cashback com carteira + ledger append-only e idempotência.
+- Afiliados e comissão em basis points.
+- VIP baseado em gasto confirmado.
+- Snapshot das promoções no pedido.
 
 ## Fase 8 — entrega digital e Discord Roles
 
-A confirmação do pagamento dispara fulfillment assíncrono através do outbox. O produto declara seu tipo de entrega em `metadata_json.delivery`. Adicionar/remover cargo usa a API oficial do Discord e requer `MANAGE_ROLES`; o bot não precisa de `ADMINISTRATOR`.
+A confirmação do pagamento dispara fulfillment assíncrono através do outbox. Adicionar/remover cargo usa a API oficial do Discord e requer `MANAGE_ROLES`; o bot não precisa de `ADMINISTRATOR`.
 
 ## Fases 2–7
 
@@ -45,11 +59,10 @@ A base anterior inclui checkout transacional, reservas de estoque, Mercado Pago 
 
 ## Produção
 
-Configure HTTPS real para OAuth2, `OAUTH_REDIRECT_URI` registrado no Developer Portal, secrets manager, PostgreSQL/Redis gerenciados, credenciais Discord/PSP, permissões mínimas e políticas LGPD. O painel não deve voltar a usar `X-Discord-User-ID` ou `X-Commerce-Admin-Key` como substituto de autenticação administrativa quando exposto em produção.
-
-Execute CI, migrations, testes de restauração, concorrência, OAuth2 e sandbox E2E antes de habilitar vendas reais.
+Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, HTTPS, OAuth2, credenciais Discord/PSP, Sentry/OTLP, permissões mínimas e políticas LGPD. Execute CI, migrations, testes de restauração, concorrência, sandbox e E2E antes de remover o estado Draft do PR.
 
 ## Próximas fases
 
-1. OpenTelemetry, métricas, Sentry e alertas.
-2. Hardening, testes E2E de concorrência, sandbox, segurança e deploy de produção.
+1. Hardening de segurança e isolamento multi-tenant completo.
+2. Sandbox/E2E de pagamentos, refunds, fulfillment e concorrência.
+3. Deploy de produção com secrets manager, backups/restauração e políticas de retenção de telemetria.
