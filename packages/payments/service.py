@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -29,10 +28,9 @@ async def create_payment_intent(
         raise CommerceError("order_not_payment_pending")
 
     existing = await session.scalar(
-        select(PaymentIntentRecord).where(
-            PaymentIntentRecord.order_id == order_id,
-            PaymentIntentRecord.provider == provider.name,
-        ).with_for_update()
+        select(PaymentIntentRecord)
+        .where(PaymentIntentRecord.order_id == order_id, PaymentIntentRecord.provider == provider.name)
+        .with_for_update()
     )
     if existing is not None:
         return existing
