@@ -18,7 +18,6 @@ from packages.payments.reliability import enqueue_outbox, next_reconcile_time
 router = APIRouter(prefix="/webhooks/payments", tags=["webhooks"])
 payment_providers = PaymentProviderFactory()
 
-
 async def _read_json(request: Request) -> tuple[bytes, dict]:
     raw = await request.body()
     if len(raw) > 2_000_000:
@@ -27,7 +26,6 @@ async def _read_json(request: Request) -> tuple[bytes, dict]:
         return raw, json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HTTPException(400, "invalid_json") from exc
-
 
 async def _verify_for_payment(request: Request, raw: bytes, payment: PaymentIntentRecord | None) -> MercadoPagoPixProvider:
     if payment is None:
@@ -42,7 +40,6 @@ async def _verify_for_payment(request: Request, raw: bytes, payment: PaymentInte
         raise HTTPException(401, "invalid_webhook_signature")
     return provider
 
-
 @router.post("/mercadopago_pix", status_code=202)
 async def mercado_pago_webhook(request: Request, x_signature: str | None = Header(default=None), x_request_id: str | None = Header(default=None)) -> dict[str, object]:
     raw, body = await _read_json(request)
@@ -52,6 +49,7 @@ async def mercado_pago_webhook(request: Request, x_signature: str | None = Heade
     async with SessionFactory() as session:
         payment = await session.scalar(select(PaymentIntentRecord).where(PaymentIntentRecord.provider == "mercadopago_pix", PaymentIntentRecord.provider_payment_id == data_id))
         provider = await _verify_for_payment(request, raw, payment)
+        await session.rollback()
         provider_event_id = str(body.get("id") or f"{x_request_id}:{data_id}")
         async with session.begin():
             existing = await session.scalar(select(PaymentEvent).where(PaymentEvent.provider == provider.name, PaymentEvent.provider_event_id == provider_event_id).with_for_update())
@@ -85,7 +83,6 @@ async def mercado_pago_webhook(request: Request, x_signature: str | None = Heade
                 enqueue_outbox(session, tenant_id=payment.tenant_id, aggregate_type="payment", aggregate_id=str(payment.id), event_type=f"payment.status.{remote.status}", payload={"order_id": str(payment.order_id), "provider": payment.provider, "provider_payment_id": payment.provider_payment_id})
     return {"accepted": True, "event_id": provider_event_id, "fingerprint": sha256(raw).hexdigest()}
 
-
 @router.post("/mercadopago_chargebacks", status_code=202)
 async def mercado_pago_chargeback_webhook(request: Request) -> dict[str, object]:
     raw, body = await _read_json(request)
@@ -104,6 +101,7 @@ async def mercado_pago_chargeback_webhook(request: Request) -> dict[str, object]
         provider = await payment_providers.mercadopago_pix(payment.tenant_id)
         if not await provider.validate_webhook({"x-signature": x_signature, "x-request-id": x_request_id, "x-data-id": data_id}, raw):
             raise HTTPException(401, "invalid_webhook_signature")
+        await session.rollback()
         provider_event_id = str(body.get("id") or f"chargeback:{data_id}")
         async with session.begin():
             existing_event = await session.scalar(select(PaymentEvent).where(PaymentEvent.provider == provider.name, PaymentEvent.provider_event_id == provider_event_id).with_for_update())
@@ -137,7 +135,6 @@ async def mercado_pago_chargeback_webhook(request: Request) -> dict[str, object]
                 await post_ledger_transaction(session, tenant_id=payment.tenant_id, idempotency_key=f"chargeback-loss:{dispute.id}", reference_type="chargeback", reference_id=str(dispute.id), currency=payment.currency, debit_account="chargebacks:loss", credit_account=f"cash:{payment.provider}", amount_minor=amount_minor or payment.amount_minor)
             enqueue_outbox(session, tenant_id=dispute.tenant_id, aggregate_type="dispute", aggregate_id=str(dispute.id), event_type="dispute.updated", payload={"provider": provider.name, "provider_dispute_id": chargeback_id, "status": dispute.status})
     return {"accepted": True, "event_id": provider_event_id, "fingerprint": sha256(raw).hexdigest()}
-
 
 @router.post("/{provider}", status_code=202)
 async def unsupported_provider_webhook(provider: str, request: Request) -> dict[str, object]:
