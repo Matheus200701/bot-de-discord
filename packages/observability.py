@@ -26,7 +26,6 @@ def configure_observability() -> None:
 
     try:
         import sentry_sdk
-
         dsn = os.getenv("SENTRY_DSN")
         if dsn:
             def before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
@@ -36,15 +35,11 @@ def configure_observability() -> None:
                     request.pop("headers", None)
                     request.pop("data", None)
                 return event
-
             sentry_sdk.init(
-                dsn=dsn,
-                environment=environment,
-                release=os.getenv("APP_VERSION") or None,
+                dsn=dsn, environment=environment, release=os.getenv("APP_VERSION") or None,
                 traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
                 profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0")),
-                send_default_pii=False,
-                before_send=before_send,
+                send_default_pii=False, before_send=before_send,
             )
     except ImportError:
         pass
@@ -66,18 +61,15 @@ def configure_observability() -> None:
         headers = _otlp_headers()
         metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
         traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-
         if traces_endpoint:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
             traces.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint, headers=headers)))
         trace.set_tracer_provider(traces)
-
         readers = []
         if metrics_endpoint:
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
             readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=metrics_endpoint, headers=headers)))
         metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
-
         _instrument_frameworks()
     except ImportError:
         pass
@@ -89,13 +81,11 @@ def _instrument_frameworks() -> None:
         FastAPIInstrumentor().instrument()
     except (ImportError, RuntimeError):
         pass
-
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
         SQLAlchemyInstrumentor().instrument()
     except (ImportError, RuntimeError):
         pass
-
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         HTTPXClientInstrumentor().instrument()
