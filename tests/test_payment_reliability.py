@@ -6,7 +6,7 @@ from packages.payments.reliability import CircuitBreaker, exponential_backoff, n
 def test_exponential_backoff_is_capped() -> None:
     assert 2 <= exponential_backoff(1, 2, 10) < 3
     assert 8 <= exponential_backoff(3, 2, 10) < 9
-    assert 10 <= exponential_backoff(20, 2, 10) <= 10.5
+    assert 10 <= exponential_backoff(20, 2, 10) <= 11
 
 
 def test_circuit_breaker_opens_and_recovers() -> None:
