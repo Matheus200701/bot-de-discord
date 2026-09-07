@@ -18,7 +18,7 @@ O limiter não é aplicado globalmente: limites devem ser definidos por rota e r
 
 ## Concorrência
 
-O checkout existente utiliza locks de linha no PostgreSQL e o worker utiliza `SKIP LOCKED`. A infraestrutura da Fase 14 permite executar testes concorrentes reais contra PostgreSQL/Redis descartáveis. O smoke test atual não substitui o E2E de corrida do checkout.
+O checkout existente utiliza locks de linha no PostgreSQL e o worker utiliza `SKIP LOCKED`. A infraestrutura da Fase 14 permite executar testes concorrentes reais contra PostgreSQL/Redis descartáveis. O smoke test não substitui o E2E de corrida do checkout.
 
 ## Status
 
