@@ -5,14 +5,45 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: commerce
+          POSTGRES_USER: commerce
+          POSTGRES_PASSWORD: commerce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commerce -d commerce"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://commerce:commerce@127.0.0.1:5432/commerce
+      REDIS_URL: redis://127.0.0.1:6379/0
+      APP_ENV: test
+      MAX_REQUEST_BODY_BYTES: 2097152
+      TRUSTED_HOSTS: localhost,127.0.0.1,testserver
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install .[dev]
+      - run: alembic upgrade head
       - run: ruff check .
       - run: mypy apps packages
       - run: pytest -q
+      - run: pytest -q -m integration
       - run: bandit -r apps packages -q
       - run: pip-audit
