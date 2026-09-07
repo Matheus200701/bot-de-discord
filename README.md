@@ -9,7 +9,7 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 - Integration tests reais para PostgreSQL e Redis.
 - Verificação concorrente de `INCR` no Redis.
 - Rate limiter distribuído reutilizável em `packages/security/rate_limit.py`.
-- Testes adicionais para `TRACE` e `TRUSTED_HOSTS`.
+- Testes adicionais para `TRACE`, `TRUSTED_HOSTS` e limite de body.
 - Configuração de rate limiting no `.env.example`.
 - Documentação em `docs/PHASE_14.md` e `docs/SECURITY.md`.
 
