@@ -14,15 +14,15 @@ Phase 14 extends the Phase 13 production gate with executable PostgreSQL/Redis i
 
 `packages/security/rate_limit.py` provides a Redis-backed fixed-window limiter. The primitive is intentionally not attached globally: production limits must be selected per route and threat model. Before go-live, apply explicit limits to authentication, financial mutations, administrative mutations and webhook endpoints where appropriate.
 
-The key should include tenant and authenticated identity where available. The limiter must not be used as a substitute for authorization or idempotency.
+The key should include tenant and authenticated identity where available. The limiter must not be used as a substitute for authorization or idempotency. For financial mutations, database/PSP idempotency remains authoritative.
 
 ## Integration gate
 
-`.github/workflows/phase14-integration.yml` starts disposable PostgreSQL 16 and Redis 7 services, installs the project, applies `alembic upgrade head`, and runs integration-marked tests. The integration test performs real `SELECT 1` and Redis `PING` operations.
+`.github/workflows/phase14-integration.yml` starts disposable PostgreSQL 16 and Redis 7 services, installs the project, applies `alembic upgrade head`, and runs integration-marked tests. The integration suite performs real PostgreSQL `SELECT 1`, Redis `PING`, and concurrent Redis `INCR` checks.
 
-## Payments and concurrency
+## Concurrency
 
-Payment webhooks remain signature validated and server-confirmed. Checkout inventory protection continues to rely on PostgreSQL row locking; the Phase 14 CI environment enables subsequent multi-connection concurrency tests. A passing smoke test does not prove the full checkout/payment E2E path.
+The checkout implementation uses PostgreSQL product row locks and the worker uses `SKIP LOCKED`. Phase 14 establishes the disposable database/Redis CI environment required for multi-connection race tests. The current integration suite is a smoke/concurrency infrastructure gate, not a complete checkout race proof.
 
 ## Automated security gates
 
