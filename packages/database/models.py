@@ -93,27 +93,53 @@ class InventoryReservation(Base):
 
 class PaymentIntentRecord(Base):
     __tablename__ = "payment_intents"
-    __table_args__ = (UniqueConstraint("provider", "provider_payment_id", name="uq_payment_provider_external"),)
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_payment_id", name="uq_payment_provider_external"),
+        UniqueConstraint("tenant_id", "order_id", "provider", name="uq_payment_order_provider"),
+        UniqueConstraint("provider", "idempotency_key", name="uq_payment_provider_idempotency"),
+    )
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     order_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     provider: Mapped[str] = mapped_column(String(40), index=True)
     provider_payment_id: Mapped[str] = mapped_column(String(200))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), index=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger())
     currency: Mapped[str] = mapped_column(String(3))
     checkout_url: Mapped[str | None] = mapped_column(Text())
     qr_code: Mapped[str | None] = mapped_column(Text())
     qr_code_text: Mapped[str | None] = mapped_column(Text())
+    reconcile_attempts: Mapped[int] = mapped_column(Integer(), default=0)
+    next_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_reconcile_error: Mapped[str | None] = mapped_column(Text())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class PaymentEvent(Base):
     __tablename__ = "payment_events"
+    __table_args__ = (UniqueConstraint("provider", "provider_event_id", name="uq_payment_event_provider_id"),)
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     provider: Mapped[str] = mapped_column(String(40))
-    provider_event_id: Mapped[str] = mapped_column(String(200), unique=True)
+    provider_event_id: Mapped[str] = mapped_column(String(200))
     event_type: Mapped[str] = mapped_column(String(100))
     payload: Mapped[dict] = mapped_column(JSON)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(128), index=True)
+    event_type: Mapped[str] = mapped_column(String(120), index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer(), default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
