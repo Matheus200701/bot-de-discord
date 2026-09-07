@@ -4,53 +4,45 @@ Plataforma de comércio para Discord, estruturada como App + API + banco + pagam
 
 ## Fase 14 — Integration, Concurrency & Distributed Protection
 
-A Fase 14 transforma parte do release gate em automação executável:
+- PostgreSQL 16 e Redis 7 como serviços descartáveis no GitHub Actions.
+- `alembic upgrade head` executado contra PostgreSQL do CI.
+- Integration tests reais para PostgreSQL e Redis.
+- Verificação concorrente de `INCR` no Redis.
+- Rate limiter distribuído reutilizável em `packages/security/rate_limit.py`.
+- Testes adicionais para `TRACE` e `TRUSTED_HOSTS`.
+- Configuração de rate limiting documentada no `.env.example`.
+- Checklist detalhado em `docs/PHASE_14.md` e `docs/SECURITY.md`.
 
-- PostgreSQL 16 e Redis 7 como serviços no GitHub Actions.
-- Migrations executadas contra banco descartável.
-- Smoke test real de conectividade PostgreSQL/Redis.
-- Rate limiter distribuído reutilizável com Redis e janela fixa.
-- Testes de rate limiting, `TRACE` e `TRUSTED_HOSTS`.
-- Documentação específica em `docs/PHASE_14.md`.
+O rate limiter não é aplicado globalmente: limites devem ser definidos por rota e risco operacional. Antes do go-live, autenticação, mutations financeiras, administração e webhooks devem receber políticas específicas.
 
-O rate limiter não é aplicado globalmente nesta fase: limites precisam ser definidos por rota e risco operacional. Antes do go-live, mutations financeiras, autenticação e webhooks devem possuir limites apropriados.
-
-A Fase 14 também não declara readiness de produção: o workflow precisa executar e passar, e ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado e validação de HTTPS/load balancer.
+A Fase 14 não declara readiness de produção. O workflow deve passar no GitHub e ainda faltam E2E completos, sandbox/certificação PSP, secret manager, isolamento de credenciais PSP por tenant, CSRF completo do dashboard, remoção do admin key legado e validação HTTPS/load balancer.
 
 ## Fase 13 — Security & Production Release Gate
 
-A plataforma possui hardening e automação de segurança:
-
-- Limite de body aplicado a `Content-Length` e streaming.
-- Allowlist de métodos HTTP; `TRACE` é rejeitado.
+- Limite de body em `Content-Length` e streaming.
+- Allowlist de métodos HTTP e rejeição de `TRACE`.
 - `TRUSTED_HOSTS`, HSTS opcional e headers centralizados.
-- GitHub Actions para CodeQL, Gitleaks e `pip-audit`.
-- Trivy para vulnerabilidades HIGH/CRITICAL de containers.
-- Checklist de release em `docs/SECURITY.md`.
+- CodeQL, Gitleaks, `pip-audit` e Trivy.
 
 ## Fase 12 — Hardening de segurança
 
 - Middleware ASGI de segurança e headers defensivos.
 - Request ID/correlação e limites de request.
 - Trusted hosts e HSTS opcional.
-- Baseline de segurança documentado.
 
 ## Fase 11 — Observabilidade
 
 - OpenTelemetry para traces/metrics.
 - Instrumentação FastAPI, SQLAlchemy e HTTPX.
 - Sentry opcional com redução de PII.
-- Configuração OTLP por ambiente.
 - SLOs e runbook operacional.
 
 ## Fase 10 — Dashboard / OAuth2 / RBAC
 
 - Dashboard Next.js/TypeScript.
-- Login OAuth2 Authorization Code com Discord.
-- `state` de uso único + cookie `HttpOnly`.
-- Sessões web com token aleatório armazenado somente como hash.
+- OAuth2 Authorization Code com Discord.
+- `state` de uso único e sessões web com tokens armazenados somente como hash.
 - Multi-tenant e RBAC `OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`.
-- APIs administrativas protegidas por autenticação e tenant membership.
 
 ## Fase 9 — Promotions & Loyalty
 
@@ -58,19 +50,17 @@ A plataforma possui hardening e automação de segurança:
 - Cashback com wallet + ledger.
 - Afiliados e comissão em basis points.
 - VIP por gasto confirmado.
-- Snapshot de promoção no pedido.
 
 ## Fase 8 — Fulfillment
 
 - Entrega digital.
 - Discord Roles via API oficial.
-- Fulfillment assíncrono/idempotente.
-- Revogação após refund.
+- Fulfillment assíncrono/idempotente e revogação após refund.
 
 ## Fases 2–7
 
-A base inclui checkout transacional, reservas de estoque, Mercado Pago Pix, webhooks assinados, reconciliação, outbox/retries/circuit breaker, refunds, disputes/chargebacks e ledger de partidas dobradas.
+Checkout transacional, reservas de estoque, Mercado Pago Pix, webhooks assinados, reconciliação, outbox/retries/circuit breaker, refunds, disputes/chargebacks e ledger financeiro.
 
 ## Produção
 
-Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, HTTPS, OAuth2, credenciais Discord/PSP, Sentry/OTLP, permissões mínimas e políticas LGPD. Execute CI, migrations, testes de restauração, concorrência, sandbox e E2E antes de remover o estado Draft do PR.
+Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, HTTPS, OAuth2, credenciais Discord/PSP, Sentry/OTLP, permissões mínimas e políticas LGPD. Execute todos os gates de CI, migrations, restauração, concorrência, sandbox e E2E antes de remover o estado Draft do PR.
