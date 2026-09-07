@@ -50,7 +50,7 @@ Entregas possuem estados persistentes (`PENDING`, `PROCESSING`, `DELIVERED`, `FA
 
 ### Discord Role Delivery
 
-A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; o bot também não deve tentar operar sobre cargos gerenciados, e a própria API aplica as restrições de hierarquia de cargos. O worker faz retry via outbox quando o Discord está temporariamente indisponível.
+A integração usa a API HTTP oficial do Discord. Adicionar/remover cargo requer `MANAGE_ROLES`; cargos gerenciados não são aceitos. A API também aplica as restrições de hierarquia dos cargos. O worker usa o outbox para repetir operações transitórias sem duplicar a concessão lógica do fulfillment.
 
 ## Fases 2–7
 
@@ -71,9 +71,9 @@ A base anterior já inclui checkout transacional, reservas de estoque com expira
 - `POST /webhooks/payments/mercadopago_pix`
 - `POST /webhooks/payments/mercadopago_chargebacks`
 
-## Segurança de entrega
+## Regras de entrega
 
-O fulfillment nunca deve liberar acesso somente porque o pedido foi criado. O gatilho é um estado de pagamento confirmado. Toda mutação externa ocorre no worker e pode ser repetida com segurança. Falhas permanentes são marcadas e permanecem recuperáveis pelo outbox/DLQ.
+O fulfillment nunca libera acesso somente porque o pedido foi criado. O gatilho é um estado de pagamento confirmado. Toda mutação externa ocorre no worker e pode ser repetida com segurança. Falhas permanentes são marcadas e permanecem recuperáveis pelo outbox/DLQ.
 
 ## Produção
 
