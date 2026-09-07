@@ -2,70 +2,50 @@
 
 Plataforma de comércio para Discord, estruturada como App + API + banco + pagamentos + entrega + observabilidade, em vez de um bot monolítico.
 
+## Fase 17 — Full Multi-Tenant Security & Financial RBAC
+
+- `DEFAULT_TENANT_ID` removido das operações comerciais da API.
+- Tenant explícito em catálogo, carrinho, checkout, pagamento e entregas.
+- Refund financeiro movido para Dashboard OAuth2 + RBAC `ADMIN/OWNER` + CSRF.
+- Criação administrativa de produtos movida para Dashboard + RBAC `OPERATOR+` + CSRF.
+- Credenciais Mercado Pago resolvidas por tenant.
+- Testes de CSRF/RBAC adicionados.
+
+A Fase 17 melhora a separação de tenant e remove o admin key legado, mas não declara readiness. APIs customer-facing ainda precisam vincular o tenant a um contexto confiável de instalação/guild do Discord antes do go-live.
+
+## Fase 16 — Multi-Tenant Security, Secret Isolation & CSRF
+
+- Double-submit CSRF.
+- Cookie de sessão `Secure`/`SameSite=Lax`.
+- Resolver de secrets por tenant.
+- Provider Mercado Pago com credenciais por instância.
+
 ## Fase 15 — E2E, Concurrency & Payment Sandbox
 
 - CI com PostgreSQL e Redis reais e migrations executáveis.
 - Smoke tests de conectividade e concorrência no Redis.
 - Rate limiter distribuído com operação Redis atômica via Lua.
 - Suite de integração dedicada ao rate limiting.
-- Contratos de sandbox PSP preparados sem colocar credenciais reais no repositório.
-- Gates de integração separados da suíte unitária.
-
-A Fase 15 melhora a confiança operacional, mas não certifica Mercado Pago nem declara readiness de produção. O sandbox precisa ser executado com credenciais de teste do provedor e os cenários completos checkout → pagamento → webhook → fulfillment → refund devem passar antes do go-live.
+- Contratos de sandbox PSP preparados sem credenciais reais no repositório.
 
 ## Fase 14 — Integration, Concurrency & Distributed Protection
 
-- PostgreSQL e Redis como serviços descartáveis no GitHub Actions.
-- `alembic upgrade head` contra PostgreSQL do CI.
-- Integration tests reais para PostgreSQL e Redis.
-- Verificação concorrente de `INCR` no Redis.
-- Rate limiter distribuído reutilizável.
-- Testes de `TRACE`, `TRUSTED_HOSTS` e limite de body.
+- PostgreSQL e Redis descartáveis no GitHub Actions.
+- `alembic upgrade head` no banco do CI.
+- Testes de integração reais.
+- Proteções HTTP e limite de request.
 
 ## Fase 13 — Security & Production Release Gate
 
 - Limite de body em `Content-Length` e streaming.
-- Allowlist de métodos HTTP e rejeição de `TRACE`.
+- Allowlist de métodos HTTP.
 - `TRUSTED_HOSTS`, HSTS opcional e headers centralizados.
 - CodeQL, Gitleaks, `pip-audit` e Trivy.
 
-## Fase 12 — Hardening
+## Fases anteriores
 
-- Middleware ASGI de segurança e headers defensivos.
-- Request ID/correlação e limites de request.
-- Trusted hosts e HSTS opcional.
-
-## Fase 11 — Observabilidade
-
-- OpenTelemetry para traces/metrics.
-- Instrumentação FastAPI, SQLAlchemy e HTTPX.
-- Sentry opcional com redução de PII.
-- SLOs e runbook operacional.
-
-## Fase 10 — Dashboard / OAuth2 / RBAC
-
-- Dashboard Next.js/TypeScript.
-- OAuth2 Authorization Code com Discord.
-- `state` de uso único e sessões web com tokens armazenados somente como hash.
-- Multi-tenant e RBAC `OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`.
-
-## Fase 9 — Promotions & Loyalty
-
-- Cupons percentuais/fixos e limites.
-- Cashback com wallet + ledger.
-- Afiliados e comissão em basis points.
-- VIP por gasto confirmado.
-
-## Fase 8 — Fulfillment
-
-- Entrega digital.
-- Discord Roles via API oficial.
-- Fulfillment assíncrono/idempotente e revogação após refund.
-
-## Fases 2–7
-
-Checkout transacional, reservas de estoque, Mercado Pago Pix, webhooks assinados, reconciliação, outbox/retries/circuit breaker, refunds, disputes/chargebacks e ledger financeiro.
+OAuth2/RBAC, observabilidade OpenTelemetry/Sentry, catálogo, checkout transacional, reservas de estoque, Mercado Pago Pix, webhooks assinados, reconciliação, outbox/retries/circuit breaker, refunds, disputes/chargebacks, ledger, fulfillment, Discord Roles, cashback, afiliados, VIP e Dashboard.
 
 ## Produção
 
-Antes de vendas reais, configure PostgreSQL/Redis gerenciados, secret manager, HTTPS, OAuth2, credenciais Discord/PSP, Sentry/OTLP, permissões mínimas e políticas LGPD. Execute todos os gates de CI, migrations, restauração, concorrência, sandbox e E2E antes de remover o estado Draft do PR.
+Ainda bloqueada. Antes de vendas reais: Secret Manager gerenciado, isolamento PSP por tenant, tenant binding confiável via Discord, E2E completo, concorrência PostgreSQL, sandbox PSP, webhooks tenant-aware, rate limits por rota, backup/restore, HTTPS/load balancer e validação dos gates de CI. 
