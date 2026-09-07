@@ -19,8 +19,10 @@ The implementation is based on the current official Discord Developer Platform d
 | Premium App subscriptions | REQUIRES_ELIGIBILITY | Separate domain/provider adapter |
 | Activities | OPTIONAL | Only if showroom/configurator provides real value |
 | Social SDK | NOT_REQUIRED | Not a Python Discord bot dependency |
+| Add/Remove Guild Member Role | SUPPORTED | Requires `MANAGE_ROLES`; hierarchy and managed-role rules still apply |
+| Guild Member listing | PRIVILEGED_INTENT | Avoid for fulfillment; direct role mutation is sufficient |
 | Private channel obfuscation | UPCOMING_BREAKING | Do not assume hidden channels are fully readable; target Nov 2026 behavior |
-| Privileged intents | MINIMIZE | Request only when needed; review threshold is now user-based |
+| Privileged intents | MINIMIZE | Request only when needed; review threshold is user-based |
 
 ## Important current changes
 
@@ -29,6 +31,10 @@ The implementation is based on the current official Discord Developer Platform d
 - Discord announced channel obfuscation for bots in August 2026; HTTP channel listing will omit channels the bot cannot view starting November 16, 2026. The application must not rely on visibility into inaccessible channels.
 - Privileged intent review changed in June 2026: the threshold is based on accessible users rather than guild count, with annual reapplication after review.
 - Discord's developer changelog records a September 3, 2026 increase of the default file upload limit from 10 MiB to 20 MiB.
+
+## Fase 8 fulfillment
+
+Role delivery uses the official guild-member role mutation endpoints. The application does not request `ADMINISTRATOR`; it requires `MANAGE_ROLES`, avoids managed roles, and relies on Discord's role hierarchy enforcement. Fulfillment is asynchronous and idempotent through the platform's PostgreSQL outbox.
 
 ## API version
 
