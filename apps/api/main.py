@@ -4,15 +4,15 @@ import os
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.webhooks import router as webhook_router
 from packages.commerce.services import CommerceError, OutOfStock, add_to_cart, create_order_from_cart
-from packages.database.models import CartItem, Product
+from packages.database.models import Order, Product
 from packages.database.session import SessionFactory
-from packages.payments.mercadopago import MercadoPagoPixProvider, MercadoPagoError
+from packages.payments.mercadopago import MercadoPagoError, MercadoPagoPixProvider
 from packages.payments.service import create_payment_intent
 
 app = FastAPI(title="Discord Commerce API", version="0.3.0")
@@ -45,7 +45,7 @@ class CheckoutIn(BaseModel):
 
 class PaymentIn(BaseModel):
     order_id: UUID
-    payer_email: EmailStr
+    payer_email: str = Field(min_length=5, max_length=320)
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
@@ -153,10 +153,10 @@ async def create_pix_payment(
     try:
         async with session.begin():
             order = await session.scalar(
-                select(__import__("packages.database.models", fromlist=["Order"]).Order).where(
-                    __import__("packages.database.models", fromlist=["Order"]).Order.id == data.order_id,
-                    __import__("packages.database.models", fromlist=["Order"]).Order.tenant_id == DEFAULT_TENANT_ID,
-                    __import__("packages.database.models", fromlist=["Order"]).Order.discord_user_id == x_discord_user_id,
+                select(Order).where(
+                    Order.id == data.order_id,
+                    Order.tenant_id == DEFAULT_TENANT_ID,
+                    Order.discord_user_id == x_discord_user_id,
                 )
             )
             if order is None:
@@ -166,7 +166,7 @@ async def create_pix_payment(
                 MercadoPagoPixProvider(),
                 DEFAULT_TENANT_ID,
                 data.order_id,
-                str(data.payer_email),
+                data.payer_email,
                 data.idempotency_key,
             )
             return {
