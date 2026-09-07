@@ -4,6 +4,21 @@ import os
 from typing import Any
 
 
+def _otlp_headers() -> dict[str, str] | None:
+    raw = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "").strip()
+    if not raw:
+        return None
+    headers: dict[str, str] = {}
+    for item in raw.split(","):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if key:
+            headers[key] = value
+    return headers or None
+
+
 def configure_observability() -> None:
     """Configure optional tracing, metrics and error reporting without leaking secrets."""
     service_name = os.getenv("OTEL_SERVICE_NAME", "discord-commerce-platform")
@@ -48,18 +63,19 @@ def configure_observability() -> None:
             "deployment.environment.name": environment,
         })
         traces = TracerProvider(resource=resource)
+        headers = _otlp_headers()
         metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
         traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
 
         if traces_endpoint:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-            traces.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint)))
+            traces.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=traces_endpoint, headers=headers)))
         trace.set_tracer_provider(traces)
 
         readers = []
         if metrics_endpoint:
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-            readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=metrics_endpoint)))
+            readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(endpoint=metrics_endpoint, headers=headers)))
         metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
 
         _instrument_frameworks()
